@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Exchange Stock Scanner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0e17;--surface:#111827;--card:#1a2332;--border:#1e2d3d;
+  --text:#e2e8f0;--muted:#64748b;--accent:#3b82f6;
+  --green:#10b981;--red:#ef4444;--yellow:#f59e0b;--purple:#8b5cf6;
+  --cyan:#06b6d4;
+}
+body{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5}
+a{color:var(--accent);text-decoration:none}
+
+/* Header */
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.header h1{font-size:16px;font-weight:600;color:var(--cyan)}
+.header-right{display:flex;align-items:center;gap:16px;font-size:12px;color:var(--muted)}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.status-dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.status-dot.scanning{background:var(--yellow);box-shadow:0 0 6px var(--yellow);animation:pulse 1s infinite}
+.status-dot.error{background:var(--red);box-shadow:0 0 6px var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Layout */
+.container{max-width:1400px;margin:0 auto;padding:16px 20px}
+
+/* Cards row */
+.cards-row{display:grid;gap:12px;margin-bottom:16px}
+.cards-4{grid-template-columns:repeat(4,1fr)}
+.cards-3{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+.card-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.card-value{font-size:22px;font-weight:700}
+.card-sub{font-size:11px;color:var(--muted);margin-top:2px}
+.positive{color:var(--green)}
+.negative{color:var(--red)}
+.neutral{color:var(--muted)}
+
+/* Exchange cards */
+.exchange-card .card-value{font-size:16px}
+.exchange-label{font-size:13px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.exchange-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px}
+.exchange-stats span{color:var(--muted)}
+
+/* Filters */
+.filter-bar{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.filter-btn{background:var(--surface);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit;transition:all .15s}
+.filter-btn:hover{border-color:var(--accent);color:var(--text)}
+.filter-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* Table */
+.table-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--surface);color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:.5px;padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+tr:hover td{background:rgba(59,130,246,.04)}
+tr.expandable{cursor:pointer}
+tr.expand-row td{padding:0;background:var(--surface)}
+tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted)}
+
+/* Score bar */
+.score-bar{width:60px;height:6px;background:#1e293b;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+.score-fill{height:100%;border-radius:3px;transition:width .3s}
+.score-sell{background:var(--red)}
+.score-hold{background:var(--yellow)}
+.score-buy{background:var(--green)}
+
+/* Signal badges */
+.badge{padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.badge-buy{background:rgba(16,185,129,.15);color:var(--green)}
+.badge-sell{background:rgba(239,68,68,.15);color:var(--red)}
+.badge-hold{background:rgba(100,116,139,.15);color:var(--muted)}
+.badge-nodata{background:rgba(100,116,139,.1);color:#475569}
+.badge-tradeable{background:rgba(139,92,246,.15);color:var(--purple);margin-left:4px}
+
+/* Trade log */
+.trade-dir{font-weight:600}
+.trade-dir.buy{color:var(--green)}
+.trade-dir.sell{color:var(--red)}
+
+/* Footer */
+.footer{text-align:center;padding:16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:8px}
+
+/* Responsive */
+@media(max-width:900px){
+  .cards-4{grid-template-columns:repeat(2,1fr)}
+  .cards-3{grid-template-columns:1fr}
+}
+@media(max-width:600px){
+  .cards-4{grid-template-columns:1fr}
+  .container{padding:8px 10px}
+  .header{padding:10px 12px}
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>MULTI-EXCHANGE STOCK SCANNER</h1>
+  <div class="header-right">
+    <span><span class="status-dot ok" id="statusDot"></span> <span id="statusText">Initialising...</span></span>
+    <span>Cycle: <strong id="cycleNum">0</strong></span>
+    <span>Last scan: <span id="lastScan">--</span></span>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Portfolio cards -->
+  <div class="cards-row cards-4" id="portfolioCards">
+    <div class="card">
+      <div class="card-label">Balance</div>
+      <div class="card-value" id="pBalance">$--</div>
+      <div class="card-sub" id="pCapital">Starting: $--</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total P&amp;L</div>
+      <div class="card-value" id="pPnl">$--</div>
+      <div class="card-sub" id="pRoi">ROI: --%</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Win Rate</div>
+      <div class="card-value" id="pWinRate">--%</div>
+      <div class="card-sub" id="pTrades">0 trades</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Max Drawdown</div>
+      <div class="card-value negative" id="pDrawdown">--%</div>
+      <div class="card-sub" id="pPositions">0 open</div>
+    </div>
+  </div>
+
+  <!-- Exchange cards -->
+  <div class="cards-row cards-3" id="exchangeCards">
+    <div class="card exchange-card" id="exKLSE">
+      <div class="exchange-label"><span style="color:var(--cyan)">KLSE</span> Bursa Malaysia</div>
+      <div class="exchange-stats">
+        <span>Trades: <strong id="exKLSE_trades">0</strong></span>
+        <span>Win Rate: <strong id="exKLSE_wr">--%</strong></span>
+        <span>P&amp;L: <strong id="exKLSE_pnl">$0.00</strong></span>
+        <span>Stocks: <strong id="exKLSE_count">0</strong></span>
+      </div>
+    </div>
+    <div class="card exchange-card" id="exSGX">
+      <div class="exchange-label"><span style="color:var(--green)">SGX</span> Singapore</div>
+      <div class="exchange-stats">
+        <span>Trades: <strong id="exSGX_trades">0</strong></span>
+        <span>Win Rate: <strong id="exSGX_wr">--%</strong></span>
+        <span>P&amp;L: <strong id="exSGX_pnl">$0.00</strong></span>
+        <span>Stocks: <strong id="exSGX_count">0</strong></span>
+      </div>
+    </div>
+    <div class="card exchange-card" id="exDFM">
+      <div class="exchange-label"><span style="color:var(--yellow)">DFM</span> Dubai</div>
+      <div class="exchange-stats">
+        <span>Trades: <strong id="exDFM_trades">0</strong></span>
+        <span>Win Rate: <strong id="exDFM_wr">--%</strong></span>
+        <span>P&amp;L: <strong id="exDFM_pnl">$0.00</strong></span>
+        <span>Stocks: <strong id="exDFM_count">0</strong></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="ALL">ALL</button>
+    <button class="filter-btn" data-filter="KLSE">KLSE</button>
+    <button class="filter-btn" data-filter="SGX">SGX</button>
+    <button class="filter-btn" data-filter="DFM">DFM</button>
+    <span style="width:12px"></span>
+    <button class="filter-btn" data-filter="BUY">BUY</button>
+    <button class="filter-btn" data-filter="SELL">SELL</button>
+    <button class="filter-btn" data-filter="TRADEABLE">TRADEABLE</button>
+  </div>
+
+  <!-- Scanner table -->
+  <div class="table-wrap">
+    <table id="scannerTable">
+      <thead>
+        <tr>
+          <th>Stock</th>
+          <th>Exchange</th>
+          <th>Price</th>
+          <th>Score</th>
+          <th>Signal</th>
+          <th>Edge</th>
+          <th>RSI</th>
+          <th>Momentum</th>
+          <th>Vol Ratio</th>
+          <th>Size</th>
+        </tr>
+      </thead>
+      <tbody id="scannerBody">
+        <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Waiting for first scan...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Trade history -->
+  <h3 style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Recent Trades</h3>
+  <div class="table-wrap">
+    <table id="tradeTable">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Stock</th>
+          <th>Exchange</th>
+          <th>Direction</th>
+          <th>Entry</th>
+          <th>Size</th>
+          <th>Score</th>
+          <th>Edge</th>
+        </tr>
+      </thead>
+      <tbody id="tradeBody">
+        <tr><td colspan="8" style="text-align:center;padding:20px;color:var(--muted)">No trades yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  PAPER TRADING MODE &mdash; No real money is at risk. Data from Yahoo Finance. Auto-refreshes every 30s.
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+let activeFilter = 'ALL';
+let expandedRow = null;
+let scannerData = [];
+
+// Filter buttons
+$$('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    renderScanner();
+  });
+});
+
+function pnlClass(val) {
+  if (val > 0) return 'positive';
+  if (val < 0) return 'negative';
+  return 'neutral';
+}
+
+function fmtMoney(val) {
+  if (val == null) return '$--';
+  const sign = val >= 0 ? '' : '-';
+  return sign + '$' + Math.abs(val).toFixed(2);
+}
+
+function fmtPct(val) {
+  if (val == null) return '--%';
+  return val.toFixed(1) + '%';
+}
+
+function scoreColor(score) {
+  if (score >= 65) return 'score-buy';
+  if (score <= 35) return 'score-sell';
+  return 'score-hold';
+}
+
+function signalBadge(dir) {
+  if (dir === 'BUY') return '<span class="badge badge-buy">BUY</span>';
+  if (dir === 'SELL') return '<span class="badge badge-sell">SELL</span>';
+  return '<span class="badge badge-hold">HOLD</span>';
+}
+
+function filterStock(s) {
+  if (activeFilter === 'ALL') return true;
+  if (activeFilter === 'KLSE' || activeFilter === 'SGX' || activeFilter === 'DFM')
+    return s.exchange === activeFilter;
+  if (activeFilter === 'BUY') return s.direction === 'BUY';
+  if (activeFilter === 'SELL') return s.direction === 'SELL';
+  if (activeFilter === 'TRADEABLE') return s.is_tradeable;
+  return true;
+}
+
+function renderScanner() {
+  const tbody = $('#scannerBody');
+  const filtered = scannerData.filter(filterStock);
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">' +
+      (scannerData.length === 0 ? 'Waiting for first scan...' : 'No stocks match filter') + '</td></tr>';
+    return;
+  }
+
+  // Sort: tradeable first, then by score descending
+  filtered.sort((a, b) => {
+    if (a.is_tradeable && !b.is_tradeable) return -1;
+    if (!a.is_tradeable && b.is_tradeable) return 1;
+    return (b.score || 0) - (a.score || 0);
+  });
+
+  let html = '';
+  for (const s of filtered) {
+    if (s.status !== 'OK') {
+      html += `<tr>
+        <td><strong>${s.name || s.stock_key}</strong> <span style="color:var(--muted)">${s.ticker}</span></td>
+        <td>${s.exchange}</td>
+        <td colspan="8"><span class="badge badge-nodata">${s.status}</span></td>
+      </tr>`;
+      continue;
+    }
+
+    const tradeableBadge = s.is_tradeable ? '<span class="badge badge-tradeable">TRADE</span>' : '';
+    const rowId = 'row-' + s.stock_key;
+
+    html += `<tr class="expandable" onclick="toggleExpand('${rowId}')">
+      <td><strong>${s.name}</strong> <span style="color:var(--muted)">${s.ticker}</span></td>
+      <td>${s.exchange}</td>
+      <td>${s.price.toFixed(s.price < 1 ? 4 : 2)}</td>
+      <td>
+        <span style="font-weight:600">${s.score.toFixed(0)}</span>
+        <div class="score-bar"><div class="score-fill ${scoreColor(s.score)}" style="width:${s.score}%"></div></div>
+      </td>
+      <td>${signalBadge(s.direction)}${tradeableBadge}</td>
+      <td class="${pnlClass(s.edge)}">${(s.edge * 100).toFixed(1)}%</td>
+      <td style="color:${s.rsi > 70 ? 'var(--red)' : s.rsi < 30 ? 'var(--green)' : 'var(--text)'}">${s.rsi.toFixed(1)}</td>
+      <td class="${pnlClass(s.momentum)}">${(s.momentum * 100).toFixed(2)}%</td>
+      <td>${s.volume_ratio.toFixed(1)}x</td>
+      <td>${s.trade_size > 0 ? '$' + s.trade_size.toFixed(2) : '--'}</td>
+    </tr>`;
+
+    // Expandable details row
+    html += `<tr class="expand-row" id="${rowId}" style="display:none"><td colspan="10"><div class="expand-content">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 24px">
+        <div>Momentum Score: <strong>${s.momentum_score.toFixed(1)}</strong></div>
+        <div>RSI Score: <strong>${s.rsi_score.toFixed(1)}</strong></div>
+        <div>VWAP Score: <strong>${s.vwap_score.toFixed(1)}</strong></div>
+        <div>EMA Score: <strong>${s.ema_score.toFixed(1)}</strong></div>
+        <div>Volume Score: <strong>${s.volume_score.toFixed(1)}</strong></div>
+        <div>Confidence: <strong>${(s.confidence * 100).toFixed(1)}%</strong></div>
+        <div>ATR: <strong>${s.atr.toFixed(4)}</strong></div>
+        <div>Volatility: <strong>${(s.volatility * 100).toFixed(1)}%</strong></div>
+        <div>EMA 12: <strong>${s.ema_12.toFixed(2)}</strong></div>
+        <div>EMA 26: <strong>${s.ema_26.toFixed(2)}</strong></div>
+        <div>SMA 50: <strong>${s.sma_50.toFixed(2)}</strong></div>
+        <div>VWAP: <strong>${s.vwap.toFixed(2)}</strong></div>
+        <div>VWAP Dev: <strong>${(s.vwap_deviation * 100).toFixed(2)}%</strong></div>
+      </div>
+      ${s.reasons && s.reasons.length > 0 ? '<div style="margin-top:8px;color:var(--accent)">Reasons: ' + s.reasons.join(' | ') + '</div>' : ''}
+    </div></td></tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function toggleExpand(rowId) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  if (expandedRow && expandedRow !== row) expandedRow.style.display = 'none';
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+  expandedRow = row.style.display === 'none' ? null : row;
+}
+
+function renderTrades(trades) {
+  const tbody = $('#tradeBody');
+  if (!trades || trades.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--muted)">No trades yet</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const t of trades) {
+    const ts = t.timestamp ? new Date(t.timestamp * 1000).toLocaleTimeString() : '--';
+    html += `<tr>
+      <td>${ts}</td>
+      <td><strong>${t.stock_key}</strong> <span style="color:var(--muted)">${t.ticker}</span></td>
+      <td>${t.exchange}</td>
+      <td><span class="trade-dir ${t.direction.toLowerCase()}">${t.direction}</span></td>
+      <td>$${t.entry_price.toFixed(2)}</td>
+      <td>$${t.size_usd.toFixed(2)}</td>
+      <td>${t.score.toFixed(0)}</td>
+      <td class="${pnlClass(t.edge)}">${(t.edge * 100).toFixed(1)}%</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function updateHeader(data) {
+  const dot = $('#statusDot');
+  const text = $('#statusText');
+
+  if (data.error) {
+    dot.className = 'status-dot error';
+    text.textContent = 'Error';
+  } else if (data.is_scanning) {
+    dot.className = 'status-dot scanning';
+    text.textContent = 'Scanning...';
+  } else {
+    dot.className = 'status-dot ok';
+    text.textContent = 'Live';
+  }
+
+  $('#cycleNum').textContent = data.scan_cycle || 0;
+  if (data.last_scan_time > 0) {
+    const ago = Math.round((Date.now() / 1000) - data.last_scan_time);
+    if (ago < 60) $('#lastScan').textContent = ago + 's ago';
+    else if (ago < 3600) $('#lastScan').textContent = Math.floor(ago / 60) + 'm ago';
+    else $('#lastScan').textContent = new Date(data.last_scan_time * 1000).toLocaleTimeString();
+  }
+}
+
+function updatePortfolio(risk, perf) {
+  if (risk) {
+    $('#pBalance').textContent = fmtMoney(risk.balance);
+    $('#pBalance').className = 'card-value ' + pnlClass(risk.total_pnl);
+    $('#pDrawdown').textContent = fmtPct(risk.max_drawdown);
+    $('#pPositions').textContent = risk.open_positions + ' open';
+    $('#pCapital').textContent = 'Starting: $100.00';
+  }
+  if (perf) {
+    $('#pPnl').textContent = fmtMoney(perf.total_pnl);
+    $('#pPnl').className = 'card-value ' + pnlClass(perf.total_pnl);
+    $('#pRoi').textContent = 'ROI: ' + fmtPct(perf.roi);
+    $('#pWinRate').textContent = fmtPct(perf.win_rate);
+    $('#pTrades').textContent = perf.total_trades + ' trades';
+  }
+}
+
+function updateExchanges(data) {
+  if (!data) return;
+  for (const ex of ['KLSE', 'SGX', 'DFM']) {
+    const d = data[ex] || {};
+    const el = id => document.getElementById(id);
+    el('ex' + ex + '_trades').textContent = d.trades || 0;
+    el('ex' + ex + '_wr').textContent = d.win_rate != null ? d.win_rate.toFixed(1) + '%' : '--%';
+    const pnlEl = el('ex' + ex + '_pnl');
+    pnlEl.textContent = fmtMoney(d.pnl || 0);
+    pnlEl.className = pnlClass(d.pnl || 0);
+    // Count stocks from scanner data
+    const stockCount = scannerData.filter(s => s.exchange === ex).length;
+    el('ex' + ex + '_count').textContent = stockCount;
+  }
+}
+
+// Fetch all APIs in parallel
+async function refresh() {
+  try {
+    const [scanRes, riskRes, perfRes, exRes, tradeRes] = await Promise.all([
+      fetch('/api/scanner').then(r => r.json()),
+      fetch('/api/risk').then(r => r.json()),
+      fetch('/api/portfolio').then(r => r.json()),
+      fetch('/api/exchanges').then(r => r.json()),
+      fetch('/api/trades').then(r => r.json()),
+    ]);
+
+    updateHeader(scanRes);
+    scannerData = scanRes.stocks || [];
+    renderScanner();
+    updatePortfolio(riskRes, perfRes);
+    updateExchanges(exRes);
+    renderTrades(tradeRes);
+
+  } catch (err) {
+    console.error('Refresh error:', err);
+    $('#statusDot').className = 'status-dot error';
+    $('#statusText').textContent = 'Connection lost';
+  }
+}
+
+// Initial + periodic refresh
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

@@ -1,1 +1,1 @@
-worker: python3 bot.py --loop
+web: python3 dashboard.py

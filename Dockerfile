@@ -7,4 +7,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python3", "bot.py", "--loop"]
+EXPOSE 8080
+CMD ["python3", "dashboard.py"]

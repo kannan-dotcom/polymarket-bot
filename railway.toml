@@ -3,6 +3,6 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python3 bot.py --loop"
+startCommand = "python3 dashboard.py"
 restartPolicyType = "always"
-healthcheckPath = ""
+healthcheckPath = "/api/health"
