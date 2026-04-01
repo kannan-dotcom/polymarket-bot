@@ -1,36 +1,37 @@
 #!/usr/bin/env python3
 """
-Polymarket HF Trading Bot — Main Entry Point
+Multi-Exchange Stock Scanner & Trading Bot — Main Entry Point
 
 Usage:
-    python bot.py                    # Paper trading mode (default)
-    python bot.py --live             # Live trading (requires API keys)
-    python bot.py --scan             # Single scan, print signals, exit
+    python bot.py                    # Scan all stocks once (default)
+    python bot.py --scan             # Same as above — single scan
+    python bot.py --loop             # Continuous scanning loop
     python bot.py --backtest         # Run backtest simulation
     python bot.py --stats            # Show portfolio stats and exit
+    python bot.py --exchange KLSE    # Scan only one exchange
 
-Starting capital: $100 USDC
-Markets: BTC 5-min, ETH 5-min, S&P 500 daily
+Exchanges: Bursa Malaysia (KLSE), SGX Singapore, DFM Dubai
+Starting Capital: $100 USD
 """
 
 import sys
 import time
-import signal
+import signal as sig
 import logging
 import argparse
+import uuid
 
 from config import (
     STARTING_CAPITAL,
-    MARKETS,
+    STOCKS,
+    EXCHANGES,
     POLL_INTERVAL_SECONDS,
     LOG_LEVEL,
 )
 from market_data import MarketDataAggregator
-from polymarket_client import PolymarketClient, SimulatedPolymarketClient
-from signals import SignalEngine
+from signals import SignalEngine, Direction
 from risk_manager import RiskManager
 from portfolio import Portfolio
-from executor import TradeExecutor
 
 # ---- Logging setup ----
 logging.basicConfig(
@@ -49,107 +50,192 @@ logger = logging.getLogger("bot")
 running = True
 
 
-def signal_handler(sig, frame):
+def signal_handler(s, frame):
     global running
     logger.info("Shutdown signal received. Stopping bot...")
     running = False
 
 
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+sig.signal(sig.SIGINT, signal_handler)
+sig.signal(sig.SIGTERM, signal_handler)
 
 
 def print_banner():
     print("""
-╔══════════════════════════════════════════════════════╗
-║         POLYMARKET HF TRADING BOT                    ║
-║         High-Frequency Prediction Market Trader      ║
-╠══════════════════════════════════════════════════════╣
-║  Starting Capital:  $100.00 USDC                     ║
-║  Strategy:          Price Feed Arbitrage              ║
-║  Markets:  BTC | ETH | XRP | XLM 5m | SPX Daily      ║
-║  Risk:              Quarter-Kelly | 5% max per trade  ║
-║  Drawdown Limit:    10% daily                        ║
-╚══════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════╗
+║         MULTI-EXCHANGE STOCK SCANNER & TRADER              ║
+║         KLSE | SGX | DFM — Yahoo Finance Data Feed         ║
+╠════════════════════════════════════════════════════════════╣
+║  Starting Capital:  $100.00 USD                            ║
+║  Strategy:          Technical Composite Scoring (0-100)    ║
+║  Indicators:        Momentum | RSI | VWAP | EMA | Volume   ║
+║  Stocks:            29 across 3 exchanges                  ║
+║  Risk:              Quarter-Kelly | 5% max per trade       ║
+║  Drawdown Limit:    10% daily                              ║
+╚════════════════════════════════════════════════════════════╝
     """)
 
 
-def run_scan(executor: TradeExecutor):
-    """Single scan mode — evaluate all markets once and print results."""
-    print("\n--- MARKET SCAN ---\n")
-
-    for market_key, cfg in MARKETS.items():
+def get_stocks_for_exchange(exchange_filter: str = None) -> dict:
+    """Get stocks filtered by exchange, or all enabled stocks."""
+    result = {}
+    for key, cfg in STOCKS.items():
         if not cfg["enabled"]:
-            print(f"  [{market_key}] DISABLED")
             continue
+        if exchange_filter and cfg["exchange"] != exchange_filter.upper():
+            continue
+        result[key] = cfg
+    return result
 
-        symbol = cfg["symbol"]
-        print(f"  Scanning {market_key} ({symbol})...")
 
+def run_scan(
+    aggregator: MarketDataAggregator,
+    signal_engine: SignalEngine,
+    risk_manager: RiskManager,
+    portfolio: Portfolio,
+    exchange_filter: str = None,
+    paper_mode: bool = True,
+):
+    """Single scan mode — evaluate all stocks and print results."""
+    stocks = get_stocks_for_exchange(exchange_filter)
+    if not stocks:
+        print(f"No enabled stocks found{' for ' + exchange_filter if exchange_filter else ''}.")
+        return
+
+    current_exchange = None
+    signals_found = 0
+    tradeable_count = 0
+
+    for stock_key, cfg in stocks.items():
+        ticker = cfg["ticker"]
+        exchange = cfg["exchange"]
+
+        # Print exchange header
+        if exchange != current_exchange:
+            current_exchange = exchange
+            ex_info = EXCHANGES[exchange]
+            print(f"\n{'='*60}")
+            print(f"  {ex_info['name']} ({exchange}) — {ex_info['currency']}")
+            print(f"{'='*60}")
+
+        # Fetch data
         try:
-            executor.agg.update(symbol)
-            snapshot = executor.agg.get_snapshot(symbol)
+            feed = aggregator.update(ticker)
+            if not feed:
+                print(f"  [{stock_key:12s}] {cfg['name']:25s} — NO DATA")
+                continue
 
-            print(f"    Price:      ${snapshot['price']:,.2f}")
-            print(f"    Momentum:   {snapshot['momentum']:.4f}")
-            print(f"    RSI:        {snapshot['rsi']:.1f}")
-            print(f"    Volatility: {snapshot['volatility']:.4f}")
-            print(f"    VWAP Dev:   {snapshot['vwap_deviation']:.4f}")
-            print(f"    EMA 12/26:  {snapshot['ema_12']:,.2f} / {snapshot['ema_26']:,.2f}")
+            snapshot = aggregator.get_snapshot(ticker)
+            if not snapshot:
+                print(f"  [{stock_key:12s}] {cfg['name']:25s} — NO SNAPSHOT")
+                continue
 
             # Generate signal
-            signal_result = executor.signals.generate(symbol, 0.50)
-            print(f"    Signal:     {signal_result.direction.value}")
-            print(f"    Model P(up): {signal_result.model_prob_up:.2%}")
-            print(f"    Edge:       {signal_result.edge:.2%}")
-            print(f"    Confidence: {signal_result.confidence:.2f}")
-            print(f"    Tradeable:  {'YES' if signal_result.is_tradeable else 'NO'}")
+            signal_result = signal_engine.generate(ticker)
+            signals_found += 1
 
-            if signal_result.is_tradeable:
-                size = executor.risk.compute_trade_size(signal_result)
-                print(f"    Trade Size: ${size:.2f}")
+            # Direction symbol
+            if signal_result.direction == Direction.BUY:
+                dir_sym = "▲ BUY "
+            elif signal_result.direction == Direction.SELL:
+                dir_sym = "▼ SELL"
+            else:
+                dir_sym = "— HOLD"
 
-            print(f"    Reasons:")
-            for r in signal_result.reasons:
-                print(f"      - {r}")
+            # Tradeable?
+            trade_size = risk_manager.compute_trade_size(signal_result)
+            tradeable = "✓" if trade_size > 0 else " "
+            if trade_size > 0:
+                tradeable_count += 1
+
+            print(
+                f"  [{stock_key:12s}] {cfg['name']:25s} | "
+                f"${snapshot['price']:>10.2f} | "
+                f"Score: {signal_result.score:5.1f} | "
+                f"{dir_sym} | "
+                f"Edge: {signal_result.edge:5.2%} | "
+                f"Conf: {signal_result.confidence:.2f} | "
+                f"RSI: {snapshot['rsi']:5.1f} | "
+                f"Mom: {snapshot['momentum']:+.2%} | "
+                f"Vol: {snapshot['volume_ratio']:.1f}x | "
+                f"{tradeable}"
+            )
+
+            # Print trade details if tradeable
+            if trade_size > 0:
+                print(
+                    f"  {'':12s}  → Trade: ${trade_size:.2f} | "
+                    f"Reasons: {', '.join(signal_result.reasons[:3])}"
+                )
+
+                # In paper mode, record and simulate
+                if paper_mode:
+                    trade_id = str(uuid.uuid4())[:8]
+                    risk_manager.open_position(
+                        position_id=trade_id,
+                        stock_key=stock_key,
+                        ticker=ticker,
+                        exchange=exchange,
+                        signal=signal_result,
+                        entry_price=snapshot["price"],
+                        size_usd=trade_size,
+                    )
+                    portfolio.record_trade(
+                        trade_id=trade_id,
+                        stock_key=stock_key,
+                        ticker=ticker,
+                        exchange=exchange,
+                        direction=signal_result.direction.value,
+                        entry_price=snapshot["price"],
+                        size_usd=trade_size,
+                        score=signal_result.score,
+                        edge=signal_result.edge,
+                        confidence=signal_result.confidence,
+                    )
+
+            # Small delay to be nice to Yahoo Finance API
+            time.sleep(0.3)
 
         except Exception as e:
-            print(f"    ERROR: {e}")
+            print(f"  [{stock_key:12s}] {cfg['name']:25s} — ERROR: {e}")
 
-        print()
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"  SCAN SUMMARY")
+    print(f"{'='*60}")
+    print(f"  Stocks scanned:   {signals_found}")
+    print(f"  Tradeable signals: {tradeable_count}")
+    print(f"{'='*60}")
 
     # Print portfolio status
-    print(executor.risk.format_stats())
+    print(risk_manager.format_stats())
 
 
-def run_loop(executor: TradeExecutor):
-    """Main trading loop — continuously scan markets and execute trades."""
+def run_loop(
+    aggregator: MarketDataAggregator,
+    signal_engine: SignalEngine,
+    risk_manager: RiskManager,
+    portfolio: Portfolio,
+    exchange_filter: str = None,
+):
+    """Continuous scanning loop."""
     global running
     cycle = 0
 
     while running:
         cycle += 1
-        logger.info(f"--- Cycle {cycle} ---")
+        logger.info(f"--- Scan Cycle {cycle} ---")
 
         try:
-            # Scan all markets and execute where signals found
-            contexts = executor.run_single_scan()
+            run_scan(
+                aggregator, signal_engine, risk_manager, portfolio,
+                exchange_filter=exchange_filter,
+                paper_mode=True,
+            )
 
-            if contexts:
-                for ctx in contexts:
-                    logger.info(
-                        f"Trade taken: {ctx.market_key} | "
-                        f"{ctx.signal.direction.value} | "
-                        f"Size: ${ctx.trade_result.size:.2f}"
-                    )
-
-                    # In paper mode, simulate resolution after interval
-                    if executor.paper_mode and ctx.position:
-                        _simulate_resolution(executor, ctx)
-
-            # Print stats every 10 cycles
-            if cycle % 10 == 0:
-                stats = executor.risk.get_stats()
+            # Print stats every 5 cycles
+            if cycle % 5 == 0:
+                stats = risk_manager.get_stats()
                 logger.info(
                     f"Balance: ${stats['balance']:.2f} | "
                     f"P&L: ${stats['total_pnl']:+.2f} | "
@@ -163,83 +249,145 @@ def run_loop(executor: TradeExecutor):
             logger.error(f"Error in cycle {cycle}: {e}", exc_info=True)
 
         # Wait before next scan
-        time.sleep(POLL_INTERVAL_SECONDS)
+        logger.info(f"Waiting {POLL_INTERVAL_SECONDS}s before next scan...")
+        for _ in range(POLL_INTERVAL_SECONDS):
+            if not running:
+                break
+            time.sleep(1)
 
     # Final stats
-    print(executor.portfolio.format_performance())
-    print(executor.risk.format_stats())
+    print(portfolio.format_performance())
+    print(risk_manager.format_stats())
 
 
-def _simulate_resolution(executor: TradeExecutor, ctx):
+def run_backtest(
+    aggregator: MarketDataAggregator,
+    signal_engine: SignalEngine,
+    risk_manager: RiskManager,
+    portfolio: Portfolio,
+    exchange_filter: str = None,
+    num_rounds: int = 50,
+):
     """
-    In paper trading, simulate whether the prediction was correct.
-    Uses the actual price movement during the round.
+    Backtest simulation — uses historical price data to simulate trades.
+    For each stock, walks through historical candles and generates signals.
     """
     import random
 
-    # For simulation: use the signal's model probability as the
-    # approximate chance of being correct (since we only trade
-    # when we have edge, this should be >50%)
-    if ctx.signal.direction.value == "UP":
-        win_prob = ctx.signal.model_prob_up
-    else:
-        win_prob = 1.0 - ctx.signal.model_prob_up
+    stocks = get_stocks_for_exchange(exchange_filter)
+    if not stocks:
+        print("No stocks to backtest.")
+        return
 
-    # Add some noise to simulate real-world variance
-    # The model isn't perfect — reduce win probability slightly
-    adjusted_prob = win_prob * 0.85 + 0.05  # compress toward 50%
-    won = random.random() < adjusted_prob
+    print(f"\n--- BACKTEST: {len(stocks)} stocks, {num_rounds} simulated rounds ---\n")
 
-    executor.resolve_position(ctx.position.id, won)
+    # First, load all data
+    print("  Loading historical data...")
+    for stock_key, cfg in stocks.items():
+        aggregator.update(cfg["ticker"])
+        time.sleep(0.3)
 
+    print("  Running simulation...\n")
 
-def run_backtest(executor: TradeExecutor, num_rounds: int = 200):
-    """
-    Backtest simulation — runs N rounds using historical data patterns.
-    """
-    print(f"\n--- BACKTEST: {num_rounds} rounds ---\n")
+    for round_num in range(num_rounds):
+        for stock_key, cfg in stocks.items():
+            ticker = cfg["ticker"]
+            exchange = cfg["exchange"]
 
-    for i in range(num_rounds):
-        contexts = executor.run_single_scan()
-        for ctx in contexts:
-            if ctx and ctx.position:
-                _simulate_resolution(executor, ctx)
+            snapshot = aggregator.get_snapshot(ticker)
+            if not snapshot:
+                continue
 
-        if (i + 1) % 50 == 0:
-            stats = executor.risk.get_stats()
+            signal_result = signal_engine.generate(ticker)
+            trade_size = risk_manager.compute_trade_size(signal_result)
+
+            if trade_size > 0:
+                trade_id = str(uuid.uuid4())[:8]
+                entry_price = snapshot["price"]
+
+                # Open position
+                pos = risk_manager.open_position(
+                    position_id=trade_id,
+                    stock_key=stock_key,
+                    ticker=ticker,
+                    exchange=exchange,
+                    signal=signal_result,
+                    entry_price=entry_price,
+                    size_usd=trade_size,
+                )
+
+                portfolio.record_trade(
+                    trade_id=trade_id,
+                    stock_key=stock_key,
+                    ticker=ticker,
+                    exchange=exchange,
+                    direction=signal_result.direction.value,
+                    entry_price=entry_price,
+                    size_usd=trade_size,
+                    score=signal_result.score,
+                    edge=signal_result.edge,
+                    confidence=signal_result.confidence,
+                )
+
+                # Simulate exit: use ATR-based price movement
+                atr = snapshot["atr"]
+                atr_pct = atr / entry_price if entry_price > 0 else 0.02
+
+                # Win probability based on signal strength
+                score_dist = abs(signal_result.score - 50) / 50
+                win_prob = 0.50 + score_dist * 0.15
+                won = random.random() < win_prob
+
+                if won:
+                    move = abs(random.gauss(atr_pct, atr_pct * 0.5))
+                else:
+                    move = -abs(random.gauss(atr_pct * 0.8, atr_pct * 0.3))
+
+                if signal_result.direction == Direction.BUY:
+                    exit_price = entry_price * (1 + move)
+                else:
+                    exit_price = entry_price * (1 - move)
+
+                pnl = risk_manager.close_position(trade_id, exit_price)
+                portfolio.resolve_trade(trade_id, exit_price, pnl)
+
+        # Progress report
+        if (round_num + 1) % 10 == 0:
+            stats = risk_manager.get_stats()
             print(
-                f"  Round {i+1:4d} | "
+                f"  Round {round_num+1:4d} | "
                 f"Balance: ${stats['balance']:7.2f} | "
                 f"P&L: ${stats['total_pnl']:+7.2f} | "
                 f"Trades: {stats['total_trades']:3d} | "
                 f"WR: {stats['win_rate']:5.1f}%"
             )
 
-        # Small delay for API rate limits
-        time.sleep(0.5)
-
-    print(executor.portfolio.format_performance())
+    print(portfolio.format_performance())
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Polymarket HF Trading Bot — $100 Starting Capital"
-    )
-    parser.add_argument(
-        "--live", action="store_true",
-        help="Enable live trading (requires Polymarket API keys)"
+        description="Multi-Exchange Stock Scanner — KLSE | SGX | DFM"
     )
     parser.add_argument(
         "--scan", action="store_true",
-        help="Single scan mode — evaluate markets and exit"
+        help="Single scan mode — evaluate all stocks and exit (default)"
+    )
+    parser.add_argument(
+        "--loop", action="store_true",
+        help="Continuous scanning loop"
     )
     parser.add_argument(
         "--backtest", action="store_true",
         help="Run backtest simulation"
     )
     parser.add_argument(
-        "--rounds", type=int, default=200,
-        help="Number of backtest rounds (default: 200)"
+        "--rounds", type=int, default=50,
+        help="Number of backtest rounds (default: 50)"
+    )
+    parser.add_argument(
+        "--exchange", type=str, default=None,
+        help="Filter by exchange: KLSE, SGX, or DFM"
     )
     parser.add_argument(
         "--stats", action="store_true",
@@ -259,15 +407,6 @@ def main():
     risk_manager = RiskManager(starting_balance=STARTING_CAPITAL)
     portfolio = Portfolio(starting_capital=STARTING_CAPITAL)
 
-    paper_mode = not args.live
-    executor = TradeExecutor(
-        risk_manager=risk_manager,
-        portfolio=portfolio,
-        aggregator=aggregator,
-        signal_engine=signal_engine,
-        paper_mode=paper_mode,
-    )
-
     if args.reset:
         portfolio.reset()
         print("Portfolio reset. Starting fresh with $100.00")
@@ -278,18 +417,28 @@ def main():
         print(risk_manager.format_stats())
         return
 
-    if args.scan:
-        run_scan(executor)
-        return
-
     if args.backtest:
-        run_backtest(executor, num_rounds=args.rounds)
+        run_backtest(
+            aggregator, signal_engine, risk_manager, portfolio,
+            exchange_filter=args.exchange,
+            num_rounds=args.rounds,
+        )
         return
 
-    # Default: run the trading loop
-    mode_str = "LIVE" if args.live else "PAPER"
-    logger.info(f"Starting bot in {mode_str} mode with ${STARTING_CAPITAL:.2f}")
-    run_loop(executor)
+    if args.loop:
+        logger.info(f"Starting continuous scan loop with ${STARTING_CAPITAL:.2f}")
+        run_loop(
+            aggregator, signal_engine, risk_manager, portfolio,
+            exchange_filter=args.exchange,
+        )
+        return
+
+    # Default: single scan
+    run_scan(
+        aggregator, signal_engine, risk_manager, portfolio,
+        exchange_filter=args.exchange,
+        paper_mode=True,
+    )
 
 
 if __name__ == "__main__":

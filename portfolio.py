@@ -1,5 +1,6 @@
 """
-Portfolio Tracker — Persists trade history, P&L, and performance metrics.
+Portfolio Tracker — Persists trade history, P&L, and performance metrics
+for multi-exchange stock trading.
 """
 
 import json
@@ -13,19 +14,18 @@ from config import TRADE_HISTORY_FILE, PORTFOLIO_FILE, STARTING_CAPITAL
 @dataclass
 class TradeRecord:
     trade_id: str
-    market_key: str
-    symbol: str
-    direction: str          # "UP" or "DOWN"
-    outcome: str            # "YES" or "NO"
+    stock_key: str           # key in STOCKS dict
+    ticker: str              # Yahoo Finance ticker
+    exchange: str            # KLSE, SGX, DFM
+    direction: str           # "BUY" or "SELL"
     entry_price: float
-    size_usdc: float
-    model_prob: float
-    market_prob: float
+    size_usd: float
+    score: float             # signal composite score
     edge: float
     confidence: float
     timestamp: float
     resolved: bool = False
-    won: Optional[bool] = None
+    exit_price: float = 0.0
     pnl: float = 0.0
     balance_after: float = 0.0
 
@@ -43,28 +43,26 @@ class Portfolio:
     def record_trade(
         self,
         trade_id: str,
-        market_key: str,
-        symbol: str,
+        stock_key: str,
+        ticker: str,
+        exchange: str,
         direction: str,
-        outcome: str,
         entry_price: float,
-        size_usdc: float,
-        model_prob: float,
-        market_prob: float,
+        size_usd: float,
+        score: float,
         edge: float,
         confidence: float,
     ):
         """Record a new trade entry."""
         record = TradeRecord(
             trade_id=trade_id,
-            market_key=market_key,
-            symbol=symbol,
+            stock_key=stock_key,
+            ticker=ticker,
+            exchange=exchange,
             direction=direction,
-            outcome=outcome,
             entry_price=entry_price,
-            size_usdc=size_usdc,
-            model_prob=model_prob,
-            market_prob=market_prob,
+            size_usd=size_usd,
+            score=score,
             edge=edge,
             confidence=confidence,
             timestamp=time.time(),
@@ -72,12 +70,12 @@ class Portfolio:
         self.trades.append(record)
         self._save()
 
-    def resolve_trade(self, trade_id: str, won: bool, pnl: float):
+    def resolve_trade(self, trade_id: str, exit_price: float, pnl: float):
         """Mark a trade as resolved with its result."""
         for t in self.trades:
             if t.trade_id == trade_id and not t.resolved:
                 t.resolved = True
-                t.won = won
+                t.exit_price = exit_price
                 t.pnl = pnl
                 t.balance_after = self._compute_current_balance()
                 break
@@ -107,8 +105,8 @@ class Portfolio:
             }
 
         total_pnl = sum(t.pnl for t in resolved)
-        wins = [t for t in resolved if t.won]
-        losses = [t for t in resolved if not t.won]
+        wins = [t for t in resolved if t.pnl > 0]
+        losses = [t for t in resolved if t.pnl <= 0]
 
         gross_profit = sum(t.pnl for t in wins) if wins else 0.0
         gross_loss = abs(sum(t.pnl for t in losses)) if losses else 0.0
@@ -120,9 +118,9 @@ class Portfolio:
         # Current streak
         streak = 0
         for t in reversed(resolved):
-            if t.won and streak >= 0:
+            if t.pnl > 0 and streak >= 0:
                 streak += 1
-            elif not t.won and streak <= 0:
+            elif t.pnl <= 0 and streak <= 0:
                 streak -= 1
             else:
                 break
@@ -150,22 +148,48 @@ class Portfolio:
         recent = self.trades[-last_n:]
         return [asdict(t) for t in recent]
 
-    def get_market_breakdown(self) -> dict:
-        """Performance breakdown by market."""
+    def get_exchange_breakdown(self) -> dict:
+        """Performance breakdown by exchange."""
         breakdown = {}
         for t in self.trades:
             if not t.resolved:
                 continue
-            key = t.market_key
+            key = t.exchange
             if key not in breakdown:
                 breakdown[key] = {
                     "trades": 0, "wins": 0, "pnl": 0.0, "volume": 0.0
                 }
             breakdown[key]["trades"] += 1
-            if t.won:
+            if t.pnl > 0:
                 breakdown[key]["wins"] += 1
             breakdown[key]["pnl"] += t.pnl
-            breakdown[key]["volume"] += t.size_usdc
+            breakdown[key]["volume"] += t.size_usd
+
+        for key in breakdown:
+            b = breakdown[key]
+            b["win_rate"] = round(b["wins"] / b["trades"] * 100, 2) if b["trades"] > 0 else 0.0
+            b["pnl"] = round(b["pnl"], 2)
+            b["volume"] = round(b["volume"], 2)
+
+        return breakdown
+
+    def get_stock_breakdown(self) -> dict:
+        """Performance breakdown by individual stock."""
+        breakdown = {}
+        for t in self.trades:
+            if not t.resolved:
+                continue
+            key = t.stock_key
+            if key not in breakdown:
+                breakdown[key] = {
+                    "ticker": t.ticker, "exchange": t.exchange,
+                    "trades": 0, "wins": 0, "pnl": 0.0, "volume": 0.0
+                }
+            breakdown[key]["trades"] += 1
+            if t.pnl > 0:
+                breakdown[key]["wins"] += 1
+            breakdown[key]["pnl"] += t.pnl
+            breakdown[key]["volume"] += t.size_usd
 
         for key in breakdown:
             b = breakdown[key]
@@ -180,9 +204,9 @@ class Portfolio:
         p = self.get_performance()
         lines = [
             "",
-            "=" * 55,
+            "=" * 60,
             "  PERFORMANCE REPORT",
-            "=" * 55,
+            "=" * 60,
             f"  Starting Capital:  ${self.starting_capital:.2f}",
             f"  Current Balance:   ${p['balance']:.2f}",
             f"  Total P&L:         ${p['total_pnl']:+.2f} ({p['roi']:+.2f}%)",
@@ -194,23 +218,42 @@ class Portfolio:
             f"  Best Trade:        ${p['best_trade']:+.2f}",
             f"  Worst Trade:       ${p['worst_trade']:+.2f}",
             f"  Current Streak:    {p['streak']:+d}",
-            "=" * 55,
+            "=" * 60,
         ]
 
-        # Market breakdown
-        breakdown = self.get_market_breakdown()
-        if breakdown:
+        # Exchange breakdown
+        exchange_breakdown = self.get_exchange_breakdown()
+        if exchange_breakdown:
             lines.append("")
-            lines.append("  BY MARKET:")
-            lines.append("  " + "-" * 50)
-            for key, b in breakdown.items():
+            lines.append("  BY EXCHANGE:")
+            lines.append("  " + "-" * 55)
+            for key, b in exchange_breakdown.items():
                 lines.append(
-                    f"  {key:12s} | {b['trades']:3d} trades | "
+                    f"  {key:6s} | {b['trades']:3d} trades | "
                     f"WR: {b['win_rate']:5.1f}% | "
                     f"P&L: ${b['pnl']:+7.2f} | "
                     f"Vol: ${b['volume']:7.2f}"
                 )
-            lines.append("  " + "-" * 50)
+            lines.append("  " + "-" * 55)
+
+        # Top stocks
+        stock_breakdown = self.get_stock_breakdown()
+        if stock_breakdown:
+            lines.append("")
+            lines.append("  TOP STOCKS BY P&L:")
+            lines.append("  " + "-" * 55)
+            sorted_stocks = sorted(
+                stock_breakdown.items(),
+                key=lambda x: x[1]["pnl"],
+                reverse=True,
+            )
+            for key, b in sorted_stocks[:10]:
+                lines.append(
+                    f"  {key:12s} ({b['exchange']}) | {b['trades']:2d} trades | "
+                    f"WR: {b['win_rate']:5.1f}% | "
+                    f"P&L: ${b['pnl']:+7.2f}"
+                )
+            lines.append("  " + "-" * 55)
 
         lines.append("")
         return "\n".join(lines)

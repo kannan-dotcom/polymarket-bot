@@ -1,8 +1,8 @@
 """
 Risk Manager — Position sizing, bankroll management, and drawdown controls.
 
-Uses fractional Kelly Criterion for sizing, with hard caps
-to protect the $100 starting bankroll.
+Uses fractional Kelly Criterion adapted for stock trading,
+with hard caps to protect the starting bankroll.
 """
 
 import time
@@ -21,16 +21,17 @@ from signals import Signal, Direction
 
 @dataclass
 class Position:
-    """An open position."""
+    """An open position in a stock."""
     id: str
-    market_id: str
-    symbol: str
-    direction: Direction
-    outcome: str              # "YES" or "NO"
-    entry_price: float
-    size_usdc: float
-    shares: float             # size / entry_price
+    stock_key: str           # key in STOCKS dict (e.g. "MAYBANK")
+    ticker: str              # Yahoo Finance ticker
+    exchange: str            # KLSE, SGX, DFM
+    direction: Direction     # BUY or SELL
+    entry_price: float       # price per share at entry
+    size_usd: float          # total position size in USD
+    shares: float            # number of shares (can be fractional for sizing)
     timestamp: float
+    signal_score: float
     signal_confidence: float
     signal_edge: float
 
@@ -54,7 +55,7 @@ class RiskState:
 
 class RiskManager:
     """
-    Controls position sizing and enforces risk limits.
+    Controls position sizing and enforces risk limits for stock trading.
     """
 
     def __init__(self, starting_balance: float = STARTING_CAPITAL):
@@ -70,45 +71,46 @@ class RiskManager:
 
     def kelly_size(self, signal: Signal) -> float:
         """
-        Fractional Kelly Criterion position size.
+        Fractional Kelly Criterion for stock position sizing.
 
-        Kelly formula: f* = (bp - q) / b
+        For stocks, Kelly formula: f* = (p * b - q) / b
         where:
-          b = odds ratio (net payout per $1 risked)
-          p = probability of winning (our model)
+          p = probability of winning (from signal confidence + edge)
           q = 1 - p
+          b = win/loss ratio (expected gain vs expected loss)
 
-        For binary markets:
-          If buying YES at price P, payout on win = (1/P - 1)
-          b = (1 - P) / P
+        We estimate:
+          p from signal confidence (mapped to ~55-70% for strong signals)
+          b from edge magnitude (expected return / expected loss)
         """
-        if signal.direction == Direction.UP:
-            entry_price = signal.market_prob_up  # price of YES
-            win_prob = signal.model_prob_up
-        elif signal.direction == Direction.DOWN:
-            entry_price = 1.0 - signal.market_prob_up  # price of NO
-            win_prob = 1.0 - signal.model_prob_up
-        else:
+        if signal.direction == Direction.HOLD:
             return 0.0
 
-        if entry_price <= 0 or entry_price >= 1:
-            return 0.0
+        # Estimate win probability from signal strength
+        # Score 65 → ~55% win rate, score 80+ → ~65% win rate
+        score_dist = abs(signal.score - 50) / 50  # 0-1
+        win_prob = 0.50 + score_dist * 0.20  # 50-70%
+        win_prob = min(win_prob, 0.70)
 
-        # Odds: how much you win per dollar risked
-        b = (1.0 - entry_price) / entry_price
+        # Estimate win/loss ratio from edge
+        # Assume risk:reward based on edge magnitude
+        # Edge of 0.05 → b ≈ 1.5 (risk 1 to gain 1.5)
+        b = 1.0 + signal.edge * 10  # edge 0.03 → b=1.3, edge 0.10 → b=2.0
+        b = max(b, 1.0)
+        b = min(b, 3.0)
+
         q = 1.0 - win_prob
 
         # Kelly fraction
-        kelly_f = (b * win_prob - q) / b
+        kelly_f = (win_prob * b - q) / b
         if kelly_f <= 0:
-            return 0.0  # negative edge, don't trade
+            return 0.0
 
-        # Apply fractional Kelly (conservative)
+        # Apply quarter-Kelly (conservative)
         fraction = kelly_f * KELLY_FRACTION
 
-        # Convert to USDC amount
+        # Convert to USD amount
         raw_size = self.state.balance * fraction
-
         return raw_size
 
     def compute_trade_size(self, signal: Signal) -> float:
@@ -132,7 +134,7 @@ class RiskManager:
         max_pct_size = self.state.balance * MAX_POSITION_PCT
         size = min(size, max_pct_size)
 
-        # Strong edge → allow slightly larger size (up to 1.5x)
+        # Strong signal → allow slightly larger size (up to 1.5x)
         if signal.is_strong:
             size = min(size * 1.5, self.state.balance * MAX_POSITION_PCT * 1.5)
 
@@ -144,8 +146,8 @@ class RiskManager:
         if size < MIN_TRADE_SIZE:
             return 0.0
 
-        # Can't bet more than we have
-        committed = sum(p.size_usdc for p in self.state.open_positions)
+        # Can't invest more than we have
+        committed = sum(p.size_usd for p in self.state.open_positions)
         available = self.state.balance - committed
         if size > available:
             size = available
@@ -161,37 +163,36 @@ class RiskManager:
     def open_position(
         self,
         position_id: str,
-        market_id: str,
-        symbol: str,
+        stock_key: str,
+        ticker: str,
+        exchange: str,
         signal: Signal,
         entry_price: float,
-        size_usdc: float,
+        size_usd: float,
     ) -> Position:
         """Record a new open position."""
-        outcome = "YES" if signal.direction == Direction.UP else "NO"
-        shares = size_usdc / entry_price if entry_price > 0 else 0
+        shares = size_usd / entry_price if entry_price > 0 else 0
 
         pos = Position(
             id=position_id,
-            market_id=market_id,
-            symbol=symbol,
+            stock_key=stock_key,
+            ticker=ticker,
+            exchange=exchange,
             direction=signal.direction,
-            outcome=outcome,
             entry_price=entry_price,
-            size_usdc=size_usdc,
+            size_usd=size_usd,
             shares=shares,
             timestamp=time.time(),
+            signal_score=signal.score,
             signal_confidence=signal.confidence,
             signal_edge=signal.edge,
         )
         self.state.open_positions.append(pos)
         return pos
 
-    def close_position(self, position_id: str, won: bool) -> float:
+    def close_position(self, position_id: str, exit_price: float) -> float:
         """
-        Close a position and update P&L.
-        won: True if the outcome resolved in our favor.
-
+        Close a position at a given exit price and update P&L.
         Returns the P&L for this trade.
         """
         pos = None
@@ -207,14 +208,15 @@ class RiskManager:
         self.state.total_trades += 1
         self.state.daily_trades += 1
 
-        if won:
-            # Payout = shares * $1.00 (winning shares pay $1)
-            payout = pos.shares * 1.0
-            pnl = payout - pos.size_usdc
+        # Compute P&L based on direction
+        if pos.direction == Direction.BUY:
+            pnl = pos.shares * (exit_price - pos.entry_price)
+        else:  # SELL (short)
+            pnl = pos.shares * (pos.entry_price - exit_price)
+
+        if pnl > 0:
             self.state.winning_trades += 1
         else:
-            # Losing shares = $0
-            pnl = -pos.size_usdc
             self.state.losing_trades += 1
 
         self.state.balance += pnl
@@ -268,7 +270,7 @@ class RiskManager:
             if self.state.total_trades > 0
             else 0.0
         )
-        committed = sum(p.size_usdc for p in self.state.open_positions)
+        committed = sum(p.size_usd for p in self.state.open_positions)
 
         return {
             "balance": round(self.state.balance, 2),

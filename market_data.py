@@ -1,18 +1,17 @@
 """
-Market Data Module — Fetches real-time and historical price data from exchanges.
-Primary feed: Binance (BTC, ETH). Secondary: Yahoo Finance (stocks).
+Market Data Module — Fetches daily OHLCV data from Yahoo Finance
+for stocks on KLSE, SGX, and DFM exchanges.
 """
 
 import time
-import requests
+import logging
 import numpy as np
+import yfinance as yf
 from dataclasses import dataclass, field
 from typing import Optional
-from config import (
-    BINANCE_BASE_URL,
-    BINANCE_KLINES_ENDPOINT,
-    BINANCE_TICKER_ENDPOINT,
-)
+from config import SIGNAL, YFINANCE_PERIOD, YFINANCE_INTERVAL
+
+logger = logging.getLogger("market_data")
 
 
 @dataclass
@@ -31,65 +30,84 @@ class PriceFeed:
     candles: list = field(default_factory=list)
     current_price: float = 0.0
     last_update: float = 0.0
+    name: str = ""
+    exchange: str = ""
+    currency: str = ""
 
 
-class BinanceFeed:
-    """Fetches price data from Binance REST API."""
+class YahooFinanceFeed:
+    """Fetches daily price data from Yahoo Finance via yfinance."""
 
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json"})
+        self._cache: dict[str, tuple[float, PriceFeed]] = {}
+        self._cache_ttl = 300  # 5 minutes
 
-    def get_current_price(self, symbol: str) -> float:
-        """Get the latest price for a symbol."""
-        url = f"{BINANCE_BASE_URL}{BINANCE_TICKER_ENDPOINT}"
-        resp = self.session.get(url, params={"symbol": symbol}, timeout=5)
-        resp.raise_for_status()
-        return float(resp.json()["price"])
-
-    def get_klines(
+    def get_price_feed(
         self,
-        symbol: str,
-        interval: str = "1m",
-        limit: int = 100,
-    ) -> list[Candle]:
+        ticker: str,
+        period: str = YFINANCE_PERIOD,
+        interval: str = YFINANCE_INTERVAL,
+    ) -> Optional[PriceFeed]:
         """
-        Fetch historical klines (candlestick data).
-        interval: 1m, 3m, 5m, 15m, 1h, 4h, 1d
+        Fetch historical OHLCV data for a ticker.
+        Returns PriceFeed with candles, or None on failure.
         """
-        url = f"{BINANCE_BASE_URL}{BINANCE_KLINES_ENDPOINT}"
-        params = {
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        }
-        resp = self.session.get(url, params=params, timeout=10)
-        resp.raise_for_status()
+        # Check cache
+        if ticker in self._cache:
+            cached_time, cached_feed = self._cache[ticker]
+            if time.time() - cached_time < self._cache_ttl:
+                return cached_feed
 
-        candles = []
-        for k in resp.json():
-            candles.append(
-                Candle(
-                    timestamp=k[0] / 1000.0,
-                    open=float(k[1]),
-                    high=float(k[2]),
-                    low=float(k[3]),
-                    close=float(k[4]),
-                    volume=float(k[5]),
+        try:
+            stock = yf.Ticker(ticker)
+            df = stock.history(period=period, interval=interval)
+
+            if df.empty:
+                logger.warning(f"No data for {ticker}")
+                return None
+
+            # Drop rows with NaN close
+            df = df.dropna(subset=["Close"])
+            if df.empty:
+                return None
+
+            candles = []
+            for idx, row in df.iterrows():
+                candles.append(
+                    Candle(
+                        timestamp=idx.timestamp(),
+                        open=float(row["Open"]),
+                        high=float(row["High"]),
+                        low=float(row["Low"]),
+                        close=float(row["Close"]),
+                        volume=float(row["Volume"]),
+                    )
                 )
-            )
-        return candles
 
-    def get_price_feed(self, symbol: str, lookback: int = 100) -> PriceFeed:
-        """Build a complete price feed with current price + history."""
-        candles = self.get_klines(symbol, interval="1m", limit=lookback)
-        current = self.get_current_price(symbol)
-        return PriceFeed(
-            symbol=symbol,
-            candles=candles,
-            current_price=current,
-            last_update=time.time(),
-        )
+            if not candles:
+                return None
+
+            feed = PriceFeed(
+                symbol=ticker,
+                candles=candles,
+                current_price=candles[-1].close,
+                last_update=time.time(),
+            )
+
+            # Cache it
+            self._cache[ticker] = (time.time(), feed)
+            return feed
+
+        except Exception as e:
+            logger.error(f"Error fetching {ticker}: {e}")
+            return None
+
+    def get_current_price(self, ticker: str) -> Optional[float]:
+        """Get the latest closing price for a ticker."""
+        feed = self.get_price_feed(ticker, period="5d", interval="1d")
+        if feed and feed.candles:
+            return feed.current_price
+        return None
 
 
 class MarketDataAggregator:
@@ -99,17 +117,18 @@ class MarketDataAggregator:
     """
 
     def __init__(self):
-        self.binance = BinanceFeed()
+        self.yahoo = YahooFinanceFeed()
         self._feeds: dict[str, PriceFeed] = {}
 
-    def update(self, symbol: str) -> PriceFeed:
-        """Refresh the feed for a given symbol."""
-        feed = self.binance.get_price_feed(symbol)
-        self._feeds[symbol] = feed
+    def update(self, ticker: str) -> Optional[PriceFeed]:
+        """Refresh the feed for a given ticker."""
+        feed = self.yahoo.get_price_feed(ticker)
+        if feed:
+            self._feeds[ticker] = feed
         return feed
 
-    def get_feed(self, symbol: str) -> Optional[PriceFeed]:
-        return self._feeds.get(symbol)
+    def get_feed(self, ticker: str) -> Optional[PriceFeed]:
+        return self._feeds.get(ticker)
 
     # ------------------------------------------------------------------
     # Derived metrics
@@ -139,12 +158,13 @@ class MarketDataAggregator:
         return np.diff(np.log(closes))
 
     def compute_volatility(self, feed: PriceFeed, window: int = 20) -> float:
-        """Annualised volatility from recent returns."""
+        """Annualized volatility from recent daily returns."""
         returns = self.compute_returns(feed)
         if len(returns) < window:
             return 0.0
         recent = returns[-window:]
-        return float(np.std(recent) * np.sqrt(window))
+        # Annualize: daily std * sqrt(252 trading days)
+        return float(np.std(recent) * np.sqrt(252))
 
     def compute_atr(self, feed: PriceFeed, period: int = 14) -> float:
         """Average True Range."""
@@ -169,10 +189,10 @@ class MarketDataAggregator:
         """Relative Strength Index."""
         closes = self.closes(feed)
         if len(closes) < period + 1:
-            return 50.0  # neutral
+            return 50.0
 
         deltas = np.diff(closes)
-        recent = deltas[-(period):]
+        recent = deltas[-period:]
         gains = np.where(recent > 0, recent, 0)
         losses = np.where(recent < 0, -recent, 0)
 
@@ -212,7 +232,7 @@ class MarketDataAggregator:
             ema = (price - ema) * multiplier + ema
         return ema
 
-    def compute_momentum(self, feed: PriceFeed, window: int = 12) -> float:
+    def compute_momentum(self, feed: PriceFeed, window: int = 10) -> float:
         """
         Price momentum as percentage change over window.
         Positive = upward momentum, negative = downward.
@@ -222,31 +242,52 @@ class MarketDataAggregator:
             return 0.0
         return float((closes[-1] - closes[-window]) / closes[-window])
 
-    def get_snapshot(self, symbol: str) -> dict:
+    def compute_volume_ratio(self, feed: PriceFeed, window: int = 20) -> float:
         """
-        Full snapshot of derived metrics for a symbol.
+        Current volume relative to average.
+        > 1.0 means above average, > 2.0 = volume spike.
+        """
+        volumes = self.volumes(feed)
+        if len(volumes) < window + 1:
+            return 1.0
+        avg_vol = np.mean(volumes[-window - 1:-1])
+        if avg_vol == 0:
+            return 1.0
+        return float(volumes[-1] / avg_vol)
+
+    def compute_sma(self, feed: PriceFeed, period: int = 50) -> float:
+        """Simple Moving Average."""
+        closes = self.closes(feed)
+        if len(closes) < period:
+            return float(np.mean(closes)) if len(closes) > 0 else 0.0
+        return float(np.mean(closes[-period:]))
+
+    def get_snapshot(self, ticker: str) -> Optional[dict]:
+        """
+        Full snapshot of derived metrics for a ticker.
         Call update() first to refresh data.
         """
-        feed = self._feeds.get(symbol)
-        if feed is None:
-            return {}
+        feed = self._feeds.get(ticker)
+        if feed is None or not feed.candles:
+            return None
 
         closes = self.closes(feed)
         current = feed.current_price
+        vwap = self.compute_vwap(feed)
 
         return {
-            "symbol": symbol,
+            "ticker": ticker,
             "price": current,
             "momentum": self.compute_momentum(feed),
             "rsi": self.compute_rsi(feed),
             "volatility": self.compute_volatility(feed),
             "atr": self.compute_atr(feed),
-            "vwap": self.compute_vwap(feed),
+            "vwap": vwap,
             "ema_12": self.compute_ema(feed, 12),
             "ema_26": self.compute_ema(feed, 26),
-            "vwap_deviation": (current - self.compute_vwap(feed)) / self.compute_vwap(feed)
-            if self.compute_vwap(feed) != 0
-            else 0.0,
+            "sma_50": self.compute_sma(feed, 50),
+            "vwap_deviation": (current - vwap) / vwap if vwap != 0 else 0.0,
+            "volume_ratio": self.compute_volume_ratio(feed),
             "candle_count": len(closes),
             "last_update": feed.last_update,
         }
