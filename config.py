@@ -191,9 +191,9 @@ SIGNAL = {
     "vwap_deviation_threshold": 0.01,  # 1% deviation from VWAP
 
     # Signal scoring thresholds
-    "buy_threshold": 65,             # score >= 65 = BUY signal
-    "sell_threshold": 35,            # score <= 35 = SELL signal
-    "strong_signal_threshold": 80,   # score >= 80 or <= 20 = strong signal
+    "buy_threshold": 60,             # score >= 60 = BUY signal
+    "sell_threshold": 40,            # score <= 40 = SELL signal
+    "strong_signal_threshold": 75,   # score >= 75 or <= 25 = strong signal
 
     # Edge thresholds for Kelly sizing
     "edge_threshold": 0.03,          # minimum 3% expected edge
