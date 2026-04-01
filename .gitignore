@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+trades.log
+trade_history.json
+portfolio.json
+.DS_Store
