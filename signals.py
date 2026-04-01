@@ -3,10 +3,11 @@ Signal Engine — Generates BUY/SELL/HOLD signals for stocks using
 a composite scoring system based on technical indicators.
 
 Core strategy:
-1. Compute individual sub-scores from momentum, RSI, VWAP, EMA, volume
+1. Compute individual sub-scores from momentum, RSI, VWAP, EMA, volume-price
 2. Weighted composite → score 0-100
-3. Score >= 65 = BUY, score <= 35 = SELL, else HOLD
-4. Confidence and edge calculated for position sizing
+3. Score >= 60 = BUY, score <= 40 = SELL, else HOLD
+4. Volume-price analysis: OBV trend, volume confirmation, activity level
+5. Confidence and edge calculated for position sizing
 """
 
 import numpy as np
@@ -37,6 +38,7 @@ class Signal:
     vwap_score: float = 50.0
     ema_score: float = 50.0
     volume_score: float = 50.0
+    vol_price_score: float = 50.0  # volume-price analysis sub-score
 
     @property
     def is_tradeable(self) -> bool:
@@ -81,47 +83,74 @@ class SignalEngine:
         scores = []
         reasons = []
 
-        # (a) Momentum signal — weight 25%
+        # (a) Momentum signal — weight 20%
         momentum = snapshot["momentum"]
         mom_score = self._momentum_signal(momentum)
-        scores.append(("momentum", mom_score, 0.25))
+        scores.append(("momentum", mom_score, 0.20))
         if abs(momentum) > SIGNAL["momentum_threshold"]:
             direction_word = "bullish" if momentum > 0 else "bearish"
             reasons.append(f"Momentum {direction_word}: {momentum:.2%}")
 
-        # (b) RSI signal — weight 20%
+        # (b) RSI signal — weight 15%
         rsi = snapshot["rsi"]
         rsi_score = self._rsi_signal(rsi)
-        scores.append(("rsi", rsi_score, 0.20))
+        scores.append(("rsi", rsi_score, 0.15))
         if rsi > SIGNAL["rsi_overbought"]:
             reasons.append(f"RSI overbought: {rsi:.1f}")
         elif rsi < SIGNAL["rsi_oversold"]:
             reasons.append(f"RSI oversold: {rsi:.1f}")
 
-        # (c) VWAP deviation signal — weight 20%
+        # (c) VWAP deviation signal — weight 15%
         vwap_dev = snapshot["vwap_deviation"]
         vwap_score = self._vwap_signal(vwap_dev)
-        scores.append(("vwap", vwap_score, 0.20))
+        scores.append(("vwap", vwap_score, 0.15))
         if abs(vwap_dev) > SIGNAL["vwap_deviation_threshold"]:
             side = "above" if vwap_dev > 0 else "below"
             reasons.append(f"Price {side} VWAP by {vwap_dev:.2%}")
 
-        # (d) EMA crossover signal — weight 20%
+        # (d) EMA crossover signal — weight 15%
         ema_12 = snapshot["ema_12"]
         ema_26 = snapshot["ema_26"]
         ema_score = self._ema_signal(ema_12, ema_26, snapshot["price"])
-        scores.append(("ema", ema_score, 0.20))
+        scores.append(("ema", ema_score, 0.15))
         if ema_12 > ema_26:
             reasons.append("EMA 12 > EMA 26 (bullish)")
         else:
             reasons.append("EMA 12 < EMA 26 (bearish)")
 
-        # (e) Volume signal — weight 15%
+        # (e) Volume activity signal — weight 10%
         volume_ratio = snapshot["volume_ratio"]
         vol_score = self._volume_signal(volume_ratio, momentum)
-        scores.append(("volume", vol_score, 0.15))
+        scores.append(("volume", vol_score, 0.10))
         if volume_ratio > SIGNAL["volume_spike_multiplier"]:
             reasons.append(f"Volume spike: {volume_ratio:.1f}x average")
+
+        # (f) Volume-price analysis — weight 25%
+        obv_trend = snapshot.get("obv_trend", 0.0)
+        vol_price_confirm = snapshot.get("vol_price_confirm", 0.0)
+        volume_trend = snapshot.get("volume_trend", 0.0)
+        vp_score = self._volume_price_signal(
+            obv_trend, vol_price_confirm, volume_trend, volume_ratio, momentum
+        )
+        scores.append(("vol_price", vp_score, 0.25))
+
+        # Generate reasons for volume-price
+        if obv_trend > 0.3:
+            reasons.append(f"OBV accumulation: {obv_trend:.2f}")
+        elif obv_trend < -0.3:
+            reasons.append(f"OBV distribution: {obv_trend:.2f}")
+        if vol_price_confirm > 0.2:
+            reasons.append("Volume confirms price up")
+        elif vol_price_confirm < -0.2:
+            reasons.append("Volume confirms price down")
+        elif momentum > 0.01 and vol_price_confirm < 0:
+            reasons.append("Warning: price up but volume diverging")
+        elif momentum < -0.01 and vol_price_confirm > 0:
+            reasons.append("Warning: price down but volume diverging")
+        if volume_trend > 0.3:
+            reasons.append(f"Rising volume trend: +{volume_trend:.0%}")
+        elif volume_trend < -0.3:
+            reasons.append(f"Declining volume: {volume_trend:.0%}")
 
         # ---- Composite score (0-100) ----
         weighted_sum = sum(score * weight for _, score, weight in scores)
@@ -161,6 +190,7 @@ class SignalEngine:
             vwap_score=vwap_score,
             ema_score=ema_score,
             volume_score=vol_score,
+            vol_price_score=vp_score,
         )
 
     # ------------------------------------------------------------------
@@ -246,6 +276,65 @@ class SignalEngine:
         elif momentum < 0 and volume_ratio > 1.0:
             return 45.0
         return 50.0
+
+    def _volume_price_signal(
+        self,
+        obv_trend: float,
+        vol_price_confirm: float,
+        volume_trend: float,
+        volume_ratio: float,
+        momentum: float,
+    ) -> float:
+        """
+        Volume-price analysis score (0-100).
+        Combines OBV trend, volume-price confirmation, and volume activity.
+
+        Key logic:
+        - Accumulation (rising OBV + rising price) = bullish
+        - Distribution (falling OBV + falling price) = bearish
+        - Divergence (price up + OBV down or vice versa) = warning/reversal
+        - Rising volume + directional move = conviction
+        - Low/declining volume = weak move, fade toward 50
+        """
+        components = []
+
+        # (1) OBV trend — strongest volume-price indicator
+        # obv_trend > 0 = accumulation, < 0 = distribution
+        obv_score = float(np.clip(50 + obv_trend * 40, 10, 90))
+        components.append((obv_score, 0.40))
+
+        # (2) Volume-price confirmation
+        # +1 = strong buy confirmation, -1 = strong sell confirmation
+        confirm_score = float(np.clip(50 + vol_price_confirm * 40, 10, 90))
+        components.append((confirm_score, 0.35))
+
+        # (3) Volume trend + activity
+        # Rising volume = conviction (amplify direction), declining = fade
+        activity_score = 50.0
+        if volume_trend > 0.2 and momentum > 0:
+            activity_score = float(np.clip(50 + volume_trend * 30, 50, 85))
+        elif volume_trend > 0.2 and momentum < 0:
+            activity_score = float(np.clip(50 - volume_trend * 30, 15, 50))
+        elif volume_trend < -0.2:
+            # Declining volume = weak conviction, pull toward neutral
+            activity_score = 50.0 + (momentum * 200)  # slight directional lean
+            activity_score = float(np.clip(activity_score, 40, 60))
+
+        # Volume ratio bonus: high current volume amplifies signal
+        if volume_ratio > 1.5:
+            boost = min((volume_ratio - 1.0) * 5, 10)
+            if momentum > 0:
+                activity_score = min(activity_score + boost, 90)
+            elif momentum < 0:
+                activity_score = max(activity_score - boost, 10)
+
+        components.append((activity_score, 0.25))
+
+        # Weighted composite
+        return float(np.clip(
+            sum(s * w for s, w in components),
+            0, 100,
+        ))
 
     def _volatility_filter(self, volatility: float) -> float:
         """

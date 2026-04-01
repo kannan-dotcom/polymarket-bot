@@ -262,6 +262,88 @@ class MarketDataAggregator:
             return float(np.mean(closes)) if len(closes) > 0 else 0.0
         return float(np.mean(closes[-period:]))
 
+    def compute_obv_trend(self, feed: PriceFeed, window: int = 10) -> float:
+        """
+        On-Balance Volume trend (normalized).
+        Positive = accumulation (buying pressure), negative = distribution.
+        Returns the slope of OBV over the window, normalized by avg volume.
+        """
+        closes = self.closes(feed)
+        volumes = self.volumes(feed)
+        if len(closes) < window + 1:
+            return 0.0
+
+        # Compute OBV for the window
+        obv = [0.0]
+        for i in range(-window, 0):
+            if closes[i] > closes[i - 1]:
+                obv.append(obv[-1] + volumes[i])
+            elif closes[i] < closes[i - 1]:
+                obv.append(obv[-1] - volumes[i])
+            else:
+                obv.append(obv[-1])
+
+        # Linear regression slope of OBV
+        x = np.arange(len(obv))
+        slope = float(np.polyfit(x, obv, 1)[0])
+
+        # Normalize by average volume so it's comparable across stocks
+        avg_vol = np.mean(volumes[-window:])
+        if avg_vol == 0:
+            return 0.0
+        return slope / avg_vol
+
+    def compute_volume_price_confirm(self, feed: PriceFeed, window: int = 5) -> float:
+        """
+        Volume-price confirmation score.
+        Checks if recent price moves are confirmed by volume.
+        +1.0 = price up on high vol (strong buy), -1.0 = price down on high vol (strong sell)
+        Near 0 = divergence (price moving without volume support)
+        """
+        closes = self.closes(feed)
+        volumes = self.volumes(feed)
+        if len(closes) < window + 1:
+            return 0.0
+
+        avg_vol = np.mean(volumes[-window * 2:-window]) if len(volumes) > window * 2 else np.mean(volumes[:-window])
+        if avg_vol == 0:
+            return 0.0
+
+        confirmations = []
+        for i in range(-window, 0):
+            price_change = (closes[i] - closes[i - 1]) / closes[i - 1]
+            vol_relative = volumes[i] / avg_vol
+
+            if price_change > 0 and vol_relative > 1.0:
+                confirmations.append(min(vol_relative - 1.0, 1.0))  # bullish confirmation
+            elif price_change < 0 and vol_relative > 1.0:
+                confirmations.append(-min(vol_relative - 1.0, 1.0))  # bearish confirmation
+            elif price_change > 0.005 and vol_relative < 0.7:
+                confirmations.append(-0.3)  # price up on low vol = weak/bearish
+            elif price_change < -0.005 and vol_relative < 0.7:
+                confirmations.append(0.3)  # price down on low vol = weak sell
+            else:
+                confirmations.append(0.0)
+
+        return float(np.mean(confirmations))
+
+    def compute_volume_trend(self, feed: PriceFeed, window: int = 10) -> float:
+        """
+        Volume trend: is volume increasing or decreasing?
+        Positive = rising volume, negative = declining volume.
+        Normalized to roughly -1 to +1.
+        """
+        volumes = self.volumes(feed)
+        if len(volumes) < window + 5:
+            return 0.0
+
+        recent_avg = np.mean(volumes[-window:])
+        prior_avg = np.mean(volumes[-window * 2:-window]) if len(volumes) >= window * 2 else np.mean(volumes[:-window])
+
+        if prior_avg == 0:
+            return 0.0
+        return float((recent_avg - prior_avg) / prior_avg)
+
     def get_snapshot(self, ticker: str) -> Optional[dict]:
         """
         Full snapshot of derived metrics for a ticker.
@@ -272,8 +354,13 @@ class MarketDataAggregator:
             return None
 
         closes = self.closes(feed)
+        volumes = self.volumes(feed)
         current = feed.current_price
         vwap = self.compute_vwap(feed)
+
+        # Volume stats
+        daily_volume = float(volumes[-1]) if len(volumes) > 0 else 0.0
+        avg_volume_20 = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
 
         return {
             "ticker": ticker,
@@ -290,4 +377,10 @@ class MarketDataAggregator:
             "volume_ratio": self.compute_volume_ratio(feed),
             "candle_count": len(closes),
             "last_update": feed.last_update,
+            # Volume analytics
+            "daily_volume": daily_volume,
+            "avg_volume_20": avg_volume_20,
+            "volume_trend": self.compute_volume_trend(feed),
+            "obv_trend": self.compute_obv_trend(feed),
+            "vol_price_confirm": self.compute_volume_price_confirm(feed),
         }

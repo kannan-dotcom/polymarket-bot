@@ -144,6 +144,12 @@ def background_scanner(
                         "ema_26": round(snapshot["ema_26"], 4),
                         "sma_50": round(snapshot["sma_50"], 4),
                         "volume_ratio": round(snapshot["volume_ratio"], 2),
+                        # Volume analytics
+                        "daily_volume": snapshot["daily_volume"],
+                        "avg_volume_20": round(snapshot["avg_volume_20"]),
+                        "volume_trend": round(snapshot["volume_trend"], 4),
+                        "obv_trend": round(snapshot["obv_trend"], 4),
+                        "vol_price_confirm": round(snapshot["vol_price_confirm"], 4),
                         # Signal
                         "direction": signal.direction.value,
                         "score": round(signal.score, 1),
@@ -158,6 +164,7 @@ def background_scanner(
                         "vwap_score": round(signal.vwap_score, 1),
                         "ema_score": round(signal.ema_score, 1),
                         "volume_score": round(signal.volume_score, 1),
+                        "vol_price_score": round(signal.vol_price_score, 1),
                         # Sizing
                         "trade_size": trade_size,
                     })

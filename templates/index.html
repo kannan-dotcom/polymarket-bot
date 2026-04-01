@@ -191,12 +191,14 @@ tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted
           <th>Edge</th>
           <th>RSI</th>
           <th>Momentum</th>
+          <th>Daily Vol</th>
           <th>Vol Ratio</th>
+          <th>OBV</th>
           <th>Size</th>
         </tr>
       </thead>
       <tbody id="scannerBody">
-        <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">Waiting for first scan...</td></tr>
+        <tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)">Waiting for first scan...</td></tr>
       </tbody>
     </table>
   </div>
@@ -264,6 +266,14 @@ function fmtPct(val) {
   return val.toFixed(1) + '%';
 }
 
+function fmtVol(val) {
+  if (val == null || val === 0) return '--';
+  if (val >= 1e9) return (val / 1e9).toFixed(1) + 'B';
+  if (val >= 1e6) return (val / 1e6).toFixed(1) + 'M';
+  if (val >= 1e3) return (val / 1e3).toFixed(0) + 'K';
+  return val.toFixed(0);
+}
+
 function scoreColor(score) {
   if (score >= 65) return 'score-buy';
   if (score <= 35) return 'score-sell';
@@ -291,7 +301,7 @@ function renderScanner() {
   const filtered = scannerData.filter(filterStock);
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted)">' +
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)">' +
       (scannerData.length === 0 ? 'Waiting for first scan...' : 'No stocks match filter') + '</td></tr>';
     return;
   }
@@ -309,13 +319,16 @@ function renderScanner() {
       html += `<tr>
         <td><strong>${s.name || s.stock_key}</strong> <span style="color:var(--muted)">${s.ticker}</span></td>
         <td>${s.exchange}</td>
-        <td colspan="8"><span class="badge badge-nodata">${s.status}</span></td>
+        <td colspan="10"><span class="badge badge-nodata">${s.status}</span></td>
       </tr>`;
       continue;
     }
 
     const tradeableBadge = s.is_tradeable ? '<span class="badge badge-tradeable">TRADE</span>' : '';
     const rowId = 'row-' + s.stock_key;
+
+    const obvColor = s.obv_trend > 0.1 ? 'var(--green)' : s.obv_trend < -0.1 ? 'var(--red)' : 'var(--muted)';
+    const obvLabel = s.obv_trend > 0.1 ? 'ACC' : s.obv_trend < -0.1 ? 'DIST' : 'FLAT';
 
     html += `<tr class="expandable" onclick="toggleExpand('${rowId}')">
       <td><strong>${s.name}</strong> <span style="color:var(--muted)">${s.ticker}</span></td>
@@ -329,28 +342,41 @@ function renderScanner() {
       <td class="${pnlClass(s.edge)}">${(s.edge * 100).toFixed(1)}%</td>
       <td style="color:${s.rsi > 70 ? 'var(--red)' : s.rsi < 30 ? 'var(--green)' : 'var(--text)'}">${s.rsi.toFixed(1)}</td>
       <td class="${pnlClass(s.momentum)}">${(s.momentum * 100).toFixed(2)}%</td>
-      <td>${s.volume_ratio.toFixed(1)}x</td>
+      <td style="font-size:11px">${fmtVol(s.daily_volume)}<br><span style="color:var(--muted);font-size:10px">avg ${fmtVol(s.avg_volume_20)}</span></td>
+      <td style="color:${s.volume_ratio > 1.5 ? 'var(--cyan)' : s.volume_ratio < 0.5 ? 'var(--red)' : 'var(--text)'}">${s.volume_ratio.toFixed(1)}x</td>
+      <td style="color:${obvColor};font-weight:600;font-size:11px">${obvLabel}<br><span style="font-weight:400;font-size:10px">${s.obv_trend > 0 ? '+' : ''}${s.obv_trend.toFixed(2)}</span></td>
       <td>${s.trade_size > 0 ? '$' + s.trade_size.toFixed(2) : '--'}</td>
     </tr>`;
 
     // Expandable details row
-    html += `<tr class="expand-row" id="${rowId}" style="display:none"><td colspan="10"><div class="expand-content">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 24px">
-        <div>Momentum Score: <strong>${s.momentum_score.toFixed(1)}</strong></div>
-        <div>RSI Score: <strong>${s.rsi_score.toFixed(1)}</strong></div>
-        <div>VWAP Score: <strong>${s.vwap_score.toFixed(1)}</strong></div>
-        <div>EMA Score: <strong>${s.ema_score.toFixed(1)}</strong></div>
-        <div>Volume Score: <strong>${s.volume_score.toFixed(1)}</strong></div>
+    html += `<tr class="expand-row" id="${rowId}" style="display:none"><td colspan="12"><div class="expand-content">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px">
+        <div><span style="color:var(--muted)">Sub-scores:</span></div>
+        <div>Momentum: <strong>${s.momentum_score.toFixed(1)}</strong></div>
+        <div>RSI: <strong>${s.rsi_score.toFixed(1)}</strong></div>
+        <div>VWAP: <strong>${s.vwap_score.toFixed(1)}</strong></div>
+        <div>EMA: <strong>${s.ema_score.toFixed(1)}</strong></div>
+        <div>Volume: <strong>${s.volume_score.toFixed(1)}</strong></div>
+        <div>Vol-Price: <strong style="color:var(--cyan)">${s.vol_price_score.toFixed(1)}</strong></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px;margin-top:8px">
+        <div><span style="color:var(--muted)">Volume Analysis:</span></div>
+        <div>OBV Trend: <strong class="${pnlClass(s.obv_trend)}">${s.obv_trend > 0 ? '+' : ''}${s.obv_trend.toFixed(3)}</strong> ${s.obv_trend > 0.1 ? '(accumulation)' : s.obv_trend < -0.1 ? '(distribution)' : '(neutral)'}</div>
+        <div>Vol-Price Confirm: <strong class="${pnlClass(s.vol_price_confirm)}">${s.vol_price_confirm > 0 ? '+' : ''}${s.vol_price_confirm.toFixed(3)}</strong></div>
+        <div>Volume Trend: <strong class="${pnlClass(s.volume_trend)}">${s.volume_trend > 0 ? '+' : ''}${(s.volume_trend * 100).toFixed(0)}%</strong></div>
+        <div>Daily Volume: <strong>${fmtVol(s.daily_volume)}</strong></div>
+        <div>20d Avg Vol: <strong>${fmtVol(s.avg_volume_20)}</strong></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px;margin-top:8px">
+        <div><span style="color:var(--muted)">Technicals:</span></div>
         <div>Confidence: <strong>${(s.confidence * 100).toFixed(1)}%</strong></div>
         <div>ATR: <strong>${s.atr.toFixed(4)}</strong></div>
         <div>Volatility: <strong>${(s.volatility * 100).toFixed(1)}%</strong></div>
-        <div>EMA 12: <strong>${s.ema_12.toFixed(2)}</strong></div>
-        <div>EMA 26: <strong>${s.ema_26.toFixed(2)}</strong></div>
+        <div>EMA 12/26: <strong>${s.ema_12.toFixed(2)}</strong> / <strong>${s.ema_26.toFixed(2)}</strong></div>
         <div>SMA 50: <strong>${s.sma_50.toFixed(2)}</strong></div>
-        <div>VWAP: <strong>${s.vwap.toFixed(2)}</strong></div>
-        <div>VWAP Dev: <strong>${(s.vwap_deviation * 100).toFixed(2)}%</strong></div>
+        <div>VWAP: <strong>${s.vwap.toFixed(2)}</strong> (${(s.vwap_deviation * 100).toFixed(2)}%)</div>
       </div>
-      ${s.reasons && s.reasons.length > 0 ? '<div style="margin-top:8px;color:var(--accent)">Reasons: ' + s.reasons.join(' | ') + '</div>' : ''}
+      ${s.reasons && s.reasons.length > 0 ? '<div style="margin-top:10px;padding:8px;background:rgba(59,130,246,.06);border-radius:4px;color:var(--accent);font-size:11px"><strong>Reasons:</strong> ' + s.reasons.join(' | ') + '</div>' : ''}
     </div></td></tr>`;
   }
   tbody.innerHTML = html;
