@@ -168,81 +168,81 @@ STOCKS = {
     # --- Singapore Exchange (SGX) ---
     "DBS": {
         "ticker": "D05.SI", "name": "DBS Group",
-        "exchange": "SGX", "sector": "Finance", "enabled": True,
+        "exchange": "SGX", "sector": "Finance", "enabled": False,
     },
     "OCBC": {
         "ticker": "O39.SI", "name": "OCBC Bank",
-        "exchange": "SGX", "sector": "Finance", "enabled": True,
+        "exchange": "SGX", "sector": "Finance", "enabled": False,
     },
     "SINGTEL": {
         "ticker": "Z74.SI", "name": "Singapore Telecom",
-        "exchange": "SGX", "sector": "Telecom", "enabled": True,
+        "exchange": "SGX", "sector": "Telecom", "enabled": False,
     },
     "UOB": {
         "ticker": "U11.SI", "name": "United Overseas Bank",
-        "exchange": "SGX", "sector": "Finance", "enabled": True,
+        "exchange": "SGX", "sector": "Finance", "enabled": False,
     },
     "KEPPEL": {
         "ticker": "BN4.SI", "name": "Keppel Corporation",
-        "exchange": "SGX", "sector": "Industrial", "enabled": True,
+        "exchange": "SGX", "sector": "Industrial", "enabled": False,
     },
     "SIA": {
         "ticker": "C6L.SI", "name": "Singapore Airlines",
-        "exchange": "SGX", "sector": "Transport", "enabled": True,
+        "exchange": "SGX", "sector": "Transport", "enabled": False,
     },
     "ASCENDAS": {
         "ticker": "A17U.SI", "name": "Ascendas REIT",
-        "exchange": "SGX", "sector": "REIT", "enabled": True,
+        "exchange": "SGX", "sector": "REIT", "enabled": False,
     },
     "VENTURE": {
         "ticker": "V03.SI", "name": "Venture Corporation",
-        "exchange": "SGX", "sector": "Technology", "enabled": True,
+        "exchange": "SGX", "sector": "Technology", "enabled": False,
     },
     "THAIBEV": {
         "ticker": "Y92.SI", "name": "Thai Beverage",
-        "exchange": "SGX", "sector": "Consumer", "enabled": True,
+        "exchange": "SGX", "sector": "Consumer", "enabled": False,
     },
     "SATS": {
         "ticker": "S58.SI", "name": "SATS Ltd",
-        "exchange": "SGX", "sector": "Industrial", "enabled": True,
+        "exchange": "SGX", "sector": "Industrial", "enabled": False,
     },
 
     # --- Dubai Financial Market (DFM) ---
     "EMAAR": {
         "ticker": "EMAAR.AE", "name": "Emaar Properties",
-        "exchange": "DFM", "sector": "Real Estate", "enabled": True,
+        "exchange": "DFM", "sector": "Real Estate", "enabled": False,
     },
     "DIB": {
         "ticker": "DIB.AE", "name": "Dubai Islamic Bank",
-        "exchange": "DFM", "sector": "Finance", "enabled": True,
+        "exchange": "DFM", "sector": "Finance", "enabled": False,
     },
     "DFMGI": {
         "ticker": "DFM.AE", "name": "Dubai Financial Market",
-        "exchange": "DFM", "sector": "Finance", "enabled": True,
+        "exchange": "DFM", "sector": "Finance", "enabled": False,
     },
     "EMAARDEV": {
         "ticker": "EMAARDEV.AE", "name": "Emaar Development",
-        "exchange": "DFM", "sector": "Real Estate", "enabled": True,
+        "exchange": "DFM", "sector": "Real Estate", "enabled": False,
     },
     "DEWA": {
         "ticker": "DEWA.AE", "name": "DEWA",
-        "exchange": "DFM", "sector": "Utilities", "enabled": True,
+        "exchange": "DFM", "sector": "Utilities", "enabled": False,
     },
     "SALIK": {
         "ticker": "SALIK.AE", "name": "Salik Company",
-        "exchange": "DFM", "sector": "Transport", "enabled": True,
+        "exchange": "DFM", "sector": "Transport", "enabled": False,
     },
     "GFH": {
         "ticker": "GFH.AE", "name": "GFH Financial Group",
-        "exchange": "DFM", "sector": "Finance", "enabled": True,
+        "exchange": "DFM", "sector": "Finance", "enabled": False,
     },
     "PARKIN": {
         "ticker": "PARKIN.AE", "name": "Parkin Company",
-        "exchange": "DFM", "sector": "Transport", "enabled": True,
+        "exchange": "DFM", "sector": "Transport", "enabled": False,
     },
     "TECOM": {
         "ticker": "TECOM.AE", "name": "TECOM Group",
-        "exchange": "DFM", "sector": "Real Estate", "enabled": True,
+        "exchange": "DFM", "sector": "Real Estate", "enabled": False,
     },
 }
 

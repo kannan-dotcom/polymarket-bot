@@ -462,7 +462,9 @@ function renderScanner() {
     if (pt) {
       const predColor = pt.predicted_direction === 'UP' ? 'var(--green)' : pt.predicted_direction === 'DOWN' ? 'var(--red)' : 'var(--muted)';
       const predArrow = pt.predicted_direction === 'UP' ? '&#9650;' : pt.predicted_direction === 'DOWN' ? '&#9660;' : '&#8212;';
-      targetsCell = `<span style="color:var(--green);font-size:10px">B:${pt.buy_target.toFixed(s.price<1?3:2)}</span><br><span style="color:var(--red);font-size:10px">S:${pt.sell_target.toFixed(s.price<1?3:2)}</span><br><span style="color:${predColor};font-size:10px">${predArrow} ${pt.predicted_move_pct > 0 ? '+' : ''}${pt.predicted_move_pct.toFixed(1)}%</span>`;
+      const confPct = (pt.prediction_confidence * 100).toFixed(0);
+      const confColor = pt.prediction_confidence > 0.6 ? 'var(--green)' : pt.prediction_confidence > 0.3 ? 'var(--yellow)' : 'var(--muted)';
+      targetsCell = `<span style="color:var(--green);font-size:10px">B:${pt.buy_target.toFixed(s.price<1?3:2)}</span><br><span style="color:var(--red);font-size:10px">S:${pt.sell_target.toFixed(s.price<1?3:2)}</span><br><span style="color:${predColor};font-size:10px">${predArrow} ${pt.predicted_move_pct > 0 ? '+' : ''}${pt.predicted_move_pct.toFixed(1)}%</span><br><span style="color:${confColor};font-size:9px">conf: ${confPct}%</span>`;
     }
 
     html += `<tr class="expandable" onclick="toggleExpand('${rowId}')">
