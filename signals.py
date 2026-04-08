@@ -13,8 +13,14 @@ Core strategy:
 import numpy as np
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 from market_data import MarketDataAggregator
-from config import SIGNAL
+from config import SIGNAL, STOCKS
+from sentiment_config import (
+    SENTIMENT_PARAMS,
+    WEIGHTS_WITH_SENTIMENT,
+    WEIGHTS_WITHOUT_SENTIMENT,
+)
 
 
 class Direction(Enum):
@@ -39,6 +45,7 @@ class Signal:
     ema_score: float = 50.0
     volume_score: float = 50.0
     vol_price_score: float = 50.0  # volume-price analysis sub-score
+    sentiment_score: float = 50.0  # forum sentiment sub-score
 
     @property
     def is_tradeable(self) -> bool:
@@ -62,8 +69,11 @@ class SignalEngine:
     from daily stock data into a composite score.
     """
 
-    def __init__(self, aggregator: MarketDataAggregator):
+    def __init__(self, aggregator: MarketDataAggregator, sentiment_aggregator=None):
         self.agg = aggregator
+        self.sentiment = sentiment_aggregator  # None if sentiment disabled
+        # Build reverse ticker map for sentiment lookup
+        self._ticker_map = {cfg["ticker"]: key for key, cfg in STOCKS.items()}
 
     def generate(self, ticker: str) -> Signal:
         """
@@ -83,56 +93,69 @@ class SignalEngine:
         scores = []
         reasons = []
 
-        # (a) Momentum signal — weight 20%
+        # Check if sentiment data available for this stock
+        sent_score = 50.0
+        has_sentiment = False
+        stock_key = self._ticker_map.get(ticker)
+        if self.sentiment and stock_key:
+            sent_data = self.sentiment.get_sentiment(stock_key)
+            if sent_data and sent_data.mention_count >= SENTIMENT_PARAMS["min_mentions"]:
+                sent_score = sent_data.sentiment_score
+                has_sentiment = True
+
+        # Select weight set based on sentiment availability
+        weights = WEIGHTS_WITH_SENTIMENT if has_sentiment else WEIGHTS_WITHOUT_SENTIMENT
+
+        # (a) Momentum signal
         momentum = snapshot["momentum"]
         mom_score = self._momentum_signal(momentum)
-        scores.append(("momentum", mom_score, 0.20))
+        scores.append(("momentum", mom_score, weights["momentum"]))
         if abs(momentum) > SIGNAL["momentum_threshold"]:
             direction_word = "bullish" if momentum > 0 else "bearish"
             reasons.append(f"Momentum {direction_word}: {momentum:.2%}")
 
-        # (b) RSI signal — weight 15%
+        # (b) RSI signal
         rsi = snapshot["rsi"]
         rsi_score = self._rsi_signal(rsi)
-        scores.append(("rsi", rsi_score, 0.15))
+        scores.append(("rsi", rsi_score, weights["rsi"]))
         if rsi > SIGNAL["rsi_overbought"]:
             reasons.append(f"RSI overbought: {rsi:.1f}")
         elif rsi < SIGNAL["rsi_oversold"]:
             reasons.append(f"RSI oversold: {rsi:.1f}")
 
-        # (c) VWAP deviation signal — weight 15%
+        # (c) VWAP deviation signal
         vwap_dev = snapshot["vwap_deviation"]
         vwap_score = self._vwap_signal(vwap_dev)
-        scores.append(("vwap", vwap_score, 0.15))
+        scores.append(("vwap", vwap_score, weights["vwap"]))
         if abs(vwap_dev) > SIGNAL["vwap_deviation_threshold"]:
             side = "above" if vwap_dev > 0 else "below"
             reasons.append(f"Price {side} VWAP by {vwap_dev:.2%}")
 
-        # (d) EMA crossover signal — weight 15%
+        # (d) EMA crossover signal
         ema_12 = snapshot["ema_12"]
         ema_26 = snapshot["ema_26"]
         ema_score = self._ema_signal(ema_12, ema_26, snapshot["price"])
-        scores.append(("ema", ema_score, 0.15))
+        scores.append(("ema", ema_score, weights["ema"]))
         if ema_12 > ema_26:
             reasons.append("EMA 12 > EMA 26 (bullish)")
         else:
             reasons.append("EMA 12 < EMA 26 (bearish)")
 
-        # (e) Volume activity signal — weight 10%
+        # (e) Volume activity signal
         volume_ratio = snapshot["volume_ratio"]
         vol_score = self._volume_signal(volume_ratio, momentum)
-        scores.append(("volume", vol_score, 0.10))
+        scores.append(("volume", vol_score, weights["volume"]))
         if volume_ratio > SIGNAL["volume_spike_multiplier"]:
             reasons.append(f"Volume spike: {volume_ratio:.1f}x average")
 
-        # (f) Volume-price analysis — weight 25%
+        # (f) Volume-price analysis
         obv_trend = snapshot.get("obv_trend", 0.0)
         vol_price_confirm = snapshot.get("vol_price_confirm", 0.0)
         volume_trend = snapshot.get("volume_trend", 0.0)
         vp_score = self._volume_price_signal(
             obv_trend, vol_price_confirm, volume_trend, volume_ratio, momentum
         )
-        scores.append(("vol_price", vp_score, 0.25))
+        scores.append(("vol_price", vp_score, weights["vol_price"]))
 
         # Generate reasons for volume-price
         if obv_trend > 0.3:
@@ -151,6 +174,16 @@ class SignalEngine:
             reasons.append(f"Rising volume trend: +{volume_trend:.0%}")
         elif volume_trend < -0.3:
             reasons.append(f"Declining volume: {volume_trend:.0%}")
+
+        # (g) Sentiment signal (only when data available)
+        if has_sentiment:
+            scores.append(("sentiment", sent_score, weights["sentiment"]))
+            if sent_score > 65:
+                reasons.append(f"Forum bullish ({sent_data.mention_count} mentions)")
+            elif sent_score < 35:
+                reasons.append(f"Forum bearish ({sent_data.mention_count} mentions)")
+            if sent_data.buzz_score > 70:
+                reasons.append(f"High forum buzz: {sent_data.mention_count} mentions")
 
         # ---- Composite score (0-100) ----
         weighted_sum = sum(score * weight for _, score, weight in scores)
@@ -191,6 +224,7 @@ class SignalEngine:
             ema_score=ema_score,
             volume_score=vol_score,
             vol_price_score=vp_score,
+            sentiment_score=sent_score,
         )
 
     # ------------------------------------------------------------------

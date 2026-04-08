@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Multi-Exchange Stock Scanner</title>
+<title>MY Stock Market Trading Platform</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -82,6 +82,26 @@ tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted
 .trade-dir.buy{color:var(--green)}
 .trade-dir.sell{color:var(--red)}
 
+/* Sentiment section */
+.sentiment-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.sent-value{font-size:18px;font-weight:700}
+.sent-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.sent-dot.bullish{background:var(--green)}
+.sent-dot.bearish{background:var(--red)}
+.sent-dot.neutral{background:var(--muted)}
+
+/* Trending bar */
+.trending-bar{display:flex;gap:8px;overflow-x:auto;padding:8px 0;margin-bottom:16px;scrollbar-width:thin}
+.trending-bar::-webkit-scrollbar{height:4px}
+.trending-bar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.trending-chip{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 14px;white-space:nowrap;min-width:120px;flex-shrink:0;font-size:11px}
+.trending-chip .chip-name{font-weight:600;font-size:12px;margin-bottom:2px}
+.trending-chip .chip-stats{color:var(--muted);display:flex;gap:8px}
+
+/* Section headers */
+.section-header{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.section-header .section-badge{background:var(--accent);color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
+
 /* Footer */
 .footer{text-align:center;padding:16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:8px}
 
@@ -101,7 +121,7 @@ tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted
 
 <!-- Header -->
 <div class="header">
-  <h1>MULTI-EXCHANGE STOCK SCANNER</h1>
+  <h1>MY STOCK MARKET TRADING PLATFORM</h1>
   <div class="header-right">
     <span><span class="status-dot ok" id="statusDot"></span> <span id="statusText">Initialising...</span></span>
     <span>Cycle: <strong id="cycleNum">0</strong></span>
@@ -166,6 +186,35 @@ tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted
     </div>
   </div>
 
+  <!-- Sentiment cards -->
+  <div class="section-header" id="sentimentSection" style="display:none">Forum Sentiment <span class="section-badge">LIVE</span></div>
+  <div class="sentiment-row" id="sentimentCards" style="display:none">
+    <div class="card">
+      <div class="card-label">Active Sources</div>
+      <div class="sent-value" id="sentSources">--</div>
+      <div class="card-sub">of 6 enabled forums</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total Mentions</div>
+      <div class="sent-value" id="sentMentions">--</div>
+      <div class="card-sub" id="sentStocksTracked">0 stocks tracked</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Most Bullish</div>
+      <div class="sent-value positive" id="sentBullish">--</div>
+      <div class="card-sub" id="sentBullishScore">--</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Most Bearish</div>
+      <div class="sent-value negative" id="sentBearish">--</div>
+      <div class="card-sub" id="sentBearishScore">--</div>
+    </div>
+  </div>
+
+  <!-- Trending stocks bar -->
+  <div class="section-header" id="trendingHeader" style="display:none">Trending Stocks</div>
+  <div class="trending-bar" id="trendingBar" style="display:none"></div>
+
   <!-- Filter bar -->
   <div class="filter-bar">
     <button class="filter-btn active" data-filter="ALL">ALL</button>
@@ -189,6 +238,7 @@ tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted
           <th>Score</th>
           <th>Signal</th>
           <th>Edge</th>
+          <th>Sentiment</th>
           <th>RSI</th>
           <th>Momentum</th>
           <th>Daily Vol</th>
@@ -198,7 +248,26 @@ tr.expand-row .expand-content{padding:10px 16px;font-size:11px;color:var(--muted
         </tr>
       </thead>
       <tbody id="scannerBody">
-        <tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)">Waiting for first scan...</td></tr>
+        <tr><td colspan="13" style="text-align:center;padding:40px;color:var(--muted)">Waiting for first scan...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Forum mentions -->
+  <div class="section-header" id="forumHeader" style="display:none">Recent Forum Mentions</div>
+  <div class="table-wrap" id="forumWrap" style="display:none">
+    <table id="forumTable">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Source</th>
+          <th>Stock(s)</th>
+          <th>Sentiment</th>
+          <th>Text</th>
+        </tr>
+      </thead>
+      <tbody id="forumBody">
+        <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">Waiting for sentiment data...</td></tr>
       </tbody>
     </table>
   </div>
@@ -301,7 +370,7 @@ function renderScanner() {
   const filtered = scannerData.filter(filterStock);
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)">' +
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--muted)">' +
       (scannerData.length === 0 ? 'Waiting for first scan...' : 'No stocks match filter') + '</td></tr>';
     return;
   }
@@ -319,7 +388,7 @@ function renderScanner() {
       html += `<tr>
         <td><strong>${s.name || s.stock_key}</strong> <span style="color:var(--muted)">${s.ticker}</span></td>
         <td>${s.exchange}</td>
-        <td colspan="10"><span class="badge badge-nodata">${s.status}</span></td>
+        <td colspan="11"><span class="badge badge-nodata">${s.status}</span></td>
       </tr>`;
       continue;
     }
@@ -340,6 +409,7 @@ function renderScanner() {
       </td>
       <td>${signalBadge(s.direction)}${tradeableBadge}</td>
       <td class="${pnlClass(s.edge)}">${(s.edge * 100).toFixed(1)}%</td>
+      <td>${sentimentCell(s)}</td>
       <td style="color:${s.rsi > 70 ? 'var(--red)' : s.rsi < 30 ? 'var(--green)' : 'var(--text)'}">${s.rsi.toFixed(1)}</td>
       <td class="${pnlClass(s.momentum)}">${(s.momentum * 100).toFixed(2)}%</td>
       <td style="font-size:11px">${fmtVol(s.daily_volume)}<br><span style="color:var(--muted);font-size:10px">avg ${fmtVol(s.avg_volume_20)}</span></td>
@@ -349,7 +419,7 @@ function renderScanner() {
     </tr>`;
 
     // Expandable details row
-    html += `<tr class="expand-row" id="${rowId}" style="display:none"><td colspan="12"><div class="expand-content">
+    html += `<tr class="expand-row" id="${rowId}" style="display:none"><td colspan="13"><div class="expand-content">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px">
         <div><span style="color:var(--muted)">Sub-scores:</span></div>
         <div>Momentum: <strong>${s.momentum_score.toFixed(1)}</strong></div>
@@ -358,6 +428,7 @@ function renderScanner() {
         <div>EMA: <strong>${s.ema_score.toFixed(1)}</strong></div>
         <div>Volume: <strong>${s.volume_score.toFixed(1)}</strong></div>
         <div>Vol-Price: <strong style="color:var(--cyan)">${s.vol_price_score.toFixed(1)}</strong></div>
+        <div>Sentiment: <strong style="color:${s.sentiment_score > 60 ? 'var(--green)' : s.sentiment_score < 40 ? 'var(--red)' : 'var(--muted)'}">${s.sentiment_score.toFixed(1)}</strong></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px;margin-top:8px">
         <div><span style="color:var(--muted)">Volume Analysis:</span></div>
@@ -367,6 +438,13 @@ function renderScanner() {
         <div>Daily Volume: <strong>${fmtVol(s.daily_volume)}</strong></div>
         <div>20d Avg Vol: <strong>${fmtVol(s.avg_volume_20)}</strong></div>
       </div>
+      ${s.sentiment_mentions > 0 ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px;margin-top:8px">
+        <div><span style="color:var(--muted)">Sentiment:</span></div>
+        <div>Score: <strong style="color:${s.sentiment_score > 60 ? 'var(--green)' : s.sentiment_score < 40 ? 'var(--red)' : 'var(--muted)'};">${s.sentiment_score.toFixed(1)}</strong></div>
+        <div>Mentions: <strong>${s.sentiment_mentions}</strong></div>
+        <div>Buzz: <strong>${s.sentiment_buzz.toFixed(1)}</strong></div>
+        <div>Trend: <strong class="${pnlClass(s.sentiment_trend)}">${s.sentiment_trend > 0 ? '+' : ''}${(s.sentiment_trend * 100).toFixed(0)}%</strong></div>
+      </div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 24px;margin-top:8px">
         <div><span style="color:var(--muted)">Technicals:</span></div>
         <div>Confidence: <strong>${(s.confidence * 100).toFixed(1)}%</strong></div>
@@ -470,6 +548,110 @@ function updateExchanges(data) {
   }
 }
 
+// Sentiment cell renderer
+function sentimentCell(s) {
+  if (!s.sentiment_mentions || s.sentiment_mentions === 0) {
+    return '<span style="color:var(--muted);font-size:10px">--</span>';
+  }
+  const sc = s.sentiment_score;
+  const dotClass = sc > 60 ? 'bullish' : sc < 40 ? 'bearish' : 'neutral';
+  const color = sc > 60 ? 'var(--green)' : sc < 40 ? 'var(--red)' : 'var(--muted)';
+  return `<span class="sent-dot ${dotClass}"></span><span style="color:${color};font-weight:600">${sc.toFixed(0)}</span><br><span style="color:var(--muted);font-size:10px">${s.sentiment_mentions} mentions</span>`;
+}
+
+// Update sentiment summary cards
+function updateSentimentCards(sentData) {
+  if (!sentData || !sentData.enabled) {
+    $('#sentimentSection').style.display = 'none';
+    $('#sentimentCards').style.display = 'none';
+    return;
+  }
+  $('#sentimentSection').style.display = '';
+  $('#sentimentCards').style.display = '';
+
+  const stocks = sentData.stocks || {};
+  const keys = Object.keys(stocks);
+  const totalMentions = keys.reduce((sum, k) => sum + stocks[k].mention_count, 0);
+  const sourcesActive = new Set();
+  keys.forEach(k => (stocks[k].top_sources || []).forEach(src => sourcesActive.add(src)));
+
+  $('#sentSources').textContent = sourcesActive.size || '--';
+  $('#sentMentions').textContent = totalMentions || '--';
+  $('#sentStocksTracked').textContent = keys.length + ' stocks tracked';
+
+  // Most bullish / bearish
+  let maxBull = null, maxBear = null;
+  for (const k of keys) {
+    const s = stocks[k];
+    if (!maxBull || s.sentiment_score > maxBull.sentiment_score) maxBull = {...s, key: k};
+    if (!maxBear || s.sentiment_score < maxBear.sentiment_score) maxBear = {...s, key: k};
+  }
+  if (maxBull && maxBull.sentiment_score > 50) {
+    $('#sentBullish').textContent = maxBull.key;
+    $('#sentBullishScore').textContent = 'Score: ' + maxBull.sentiment_score.toFixed(0) + ' (' + maxBull.mention_count + ' mentions)';
+  }
+  if (maxBear && maxBear.sentiment_score < 50) {
+    $('#sentBearish').textContent = maxBear.key;
+    $('#sentBearishScore').textContent = 'Score: ' + maxBear.sentiment_score.toFixed(0) + ' (' + maxBear.mention_count + ' mentions)';
+  }
+}
+
+// Render trending stocks bar
+function renderTrending(trendData) {
+  if (!trendData || !trendData.enabled || !trendData.trending || trendData.trending.length === 0) {
+    $('#trendingHeader').style.display = 'none';
+    $('#trendingBar').style.display = 'none';
+    return;
+  }
+  $('#trendingHeader').style.display = '';
+  $('#trendingBar').style.display = '';
+
+  const bar = $('#trendingBar');
+  let html = '';
+  for (const t of trendData.trending) {
+    const color = t.sentiment_score > 60 ? 'var(--green)' : t.sentiment_score < 40 ? 'var(--red)' : 'var(--muted)';
+    const trendArrow = t.mention_trend > 0.1 ? '&#9650;' : t.mention_trend < -0.1 ? '&#9660;' : '&#8212;';
+    html += `<div class="trending-chip">
+      <div class="chip-name" style="color:${color}">${t.stock_key}</div>
+      <div class="chip-stats">
+        <span>${t.mention_count} mentions</span>
+        <span style="color:${color}">${t.sentiment_score.toFixed(0)}</span>
+        <span>${trendArrow}</span>
+      </div>
+    </div>`;
+  }
+  bar.innerHTML = html;
+}
+
+// Render forum posts table
+function renderForumPosts(postsData) {
+  if (!postsData || !postsData.enabled || !postsData.posts || postsData.posts.length === 0) {
+    $('#forumHeader').style.display = 'none';
+    $('#forumWrap').style.display = 'none';
+    return;
+  }
+  $('#forumHeader').style.display = '';
+  $('#forumWrap').style.display = '';
+
+  const tbody = $('#forumBody');
+  let html = '';
+  for (const p of postsData.posts) {
+    const ts = p.timestamp ? new Date(p.timestamp * 1000).toLocaleTimeString() : '--';
+    const sentColor = p.raw_sentiment > 0.1 ? 'var(--green)' : p.raw_sentiment < -0.1 ? 'var(--red)' : 'var(--muted)';
+    const sentLabel = p.raw_sentiment > 0.1 ? 'Bullish' : p.raw_sentiment < -0.1 ? 'Bearish' : 'Neutral';
+    const stocks = (p.stock_mentions || []).join(', ') || '--';
+    const text = (p.text || '').substring(0, 120);
+    html += `<tr>
+      <td style="font-size:11px">${ts}</td>
+      <td><span style="color:var(--cyan);font-size:11px">${p.source}</span></td>
+      <td><strong style="font-size:11px">${stocks}</strong></td>
+      <td><span style="color:${sentColor};font-weight:600;font-size:11px">${sentLabel}</span></td>
+      <td style="font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${text}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
 // Fetch all APIs in parallel
 async function refresh() {
   try {
@@ -487,6 +669,17 @@ async function refresh() {
     updatePortfolio(riskRes, perfRes);
     updateExchanges(exRes);
     renderTrades(tradeRes);
+
+    // Sentiment endpoints (non-blocking — graceful if not available)
+    Promise.all([
+      fetch('/api/sentiment').then(r => r.json()).catch(() => null),
+      fetch('/api/sentiment/trending').then(r => r.json()).catch(() => null),
+      fetch('/api/sentiment/posts').then(r => r.json()).catch(() => null),
+    ]).then(([sentRes, trendRes, postsRes]) => {
+      updateSentimentCards(sentRes);
+      renderTrending(trendRes);
+      renderForumPosts(postsRes);
+    });
 
   } catch (err) {
     console.error('Refresh error:', err);

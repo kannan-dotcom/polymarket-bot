@@ -60,7 +60,7 @@ STOCKS = {
         "exchange": "KLSE", "sector": "Energy", "enabled": True,
     },
     "CIMB": {
-        "ticker": "6888.KL", "name": "CIMB Group",
+        "ticker": "1023.KL", "name": "CIMB Group",
         "exchange": "KLSE", "sector": "Finance", "enabled": True,
     },
     "TM": {
@@ -83,8 +83,85 @@ STOCKS = {
         "ticker": "4677.KL", "name": "YTL Corporation",
         "exchange": "KLSE", "sector": "Conglomerate", "enabled": True,
     },
-    "CIMBB": {
-        "ticker": "1023.KL", "name": "CIMB Bank",
+    # --- Expanded KLSE stocks ---
+    "TOPGLOV": {
+        "ticker": "7113.KL", "name": "Top Glove",
+        "exchange": "KLSE", "sector": "Healthcare", "enabled": True,
+    },
+    "HARTA": {
+        "ticker": "5168.KL", "name": "Hartalega",
+        "exchange": "KLSE", "sector": "Healthcare", "enabled": True,
+    },
+    "IHH": {
+        "ticker": "5225.KL", "name": "IHH Healthcare",
+        "exchange": "KLSE", "sector": "Healthcare", "enabled": True,
+    },
+    "AXIATA": {
+        "ticker": "6888.KL", "name": "Axiata Group",
+        "exchange": "KLSE", "sector": "Telecom", "enabled": True,
+    },
+    "DIALOG": {
+        "ticker": "7277.KL", "name": "Dialog Group",
+        "exchange": "KLSE", "sector": "Energy", "enabled": True,
+    },
+    "PETDAG": {
+        "ticker": "5681.KL", "name": "Petronas Dagangan",
+        "exchange": "KLSE", "sector": "Energy", "enabled": True,
+    },
+    "HLBANK": {
+        "ticker": "5819.KL", "name": "Hong Leong Bank",
+        "exchange": "KLSE", "sector": "Finance", "enabled": True,
+    },
+    "PRESS": {
+        "ticker": "8869.KL", "name": "Press Metal",
+        "exchange": "KLSE", "sector": "Industrial", "enabled": True,
+    },
+    "MRDIY": {
+        "ticker": "5296.KL", "name": "Mr DIY Group",
+        "exchange": "KLSE", "sector": "Consumer", "enabled": True,
+    },
+    "INARI": {
+        "ticker": "0166.KL", "name": "Inari Amertron",
+        "exchange": "KLSE", "sector": "Technology", "enabled": True,
+    },
+    "SUNWAY": {
+        "ticker": "5211.KL", "name": "Sunway Berhad",
+        "exchange": "KLSE", "sector": "Conglomerate", "enabled": True,
+    },
+    "GAMUDA": {
+        "ticker": "5398.KL", "name": "Gamuda Berhad",
+        "exchange": "KLSE", "sector": "Construction", "enabled": True,
+    },
+    "QL": {
+        "ticker": "7084.KL", "name": "QL Resources",
+        "exchange": "KLSE", "sector": "Consumer", "enabled": True,
+    },
+    "NESTLE": {
+        "ticker": "4707.KL", "name": "Nestle Malaysia",
+        "exchange": "KLSE", "sector": "Consumer", "enabled": True,
+    },
+    "PPB": {
+        "ticker": "4065.KL", "name": "PPB Group",
+        "exchange": "KLSE", "sector": "Conglomerate", "enabled": True,
+    },
+    "RHB": {
+        "ticker": "1066.KL", "name": "RHB Bank",
+        "exchange": "KLSE", "sector": "Finance", "enabled": True,
+    },
+    "SDG": {
+        "ticker": "5285.KL", "name": "SD Guthrie",
+        "exchange": "KLSE", "sector": "Plantation", "enabled": True,
+    },
+    "MISC": {
+        "ticker": "3816.KL", "name": "MISC Berhad",
+        "exchange": "KLSE", "sector": "Transport", "enabled": True,
+    },
+    "KLCC": {
+        "ticker": "5235SS.KL", "name": "KLCCP Stapled",
+        "exchange": "KLSE", "sector": "REIT", "enabled": True,
+    },
+    "AMBANK": {
+        "ticker": "1015.KL", "name": "AMMB Holdings",
         "exchange": "KLSE", "sector": "Finance", "enabled": True,
     },
 
@@ -223,3 +300,8 @@ LOG_LEVEL = "INFO"
 # ============================================================
 POLL_INTERVAL_SECONDS = 300         # scan every 5 minutes
 SCAN_INTERVAL_HOURS = 1             # full scan every hour in loop mode
+
+# ============================================================
+# SENTIMENT ANALYSIS
+# ============================================================
+SENTIMENT_ENABLED = True            # Enable forum sentiment scraping

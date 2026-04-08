@@ -12,17 +12,24 @@ import threading
 import logging
 from flask import Flask, jsonify, render_template
 
+from flask import request
+
 from config import (
     STARTING_CAPITAL,
     STOCKS,
     EXCHANGES,
     POLL_INTERVAL_SECONDS,
     LOG_LEVEL,
+    SENTIMENT_ENABLED,
 )
+from sentiment_config import SENTIMENT_SCRAPE_INTERVAL
 from market_data import MarketDataAggregator
 from signals import SignalEngine, Direction
 from risk_manager import RiskManager
 from portfolio import Portfolio
+
+if SENTIMENT_ENABLED:
+    from sentiment_scraper import SentimentAggregator
 
 # ---- Logging ----
 logging.basicConfig(
@@ -70,6 +77,29 @@ class ScannerState:
                 "is_scanning": self._is_scanning,
                 "error": self._error,
             }
+
+
+# ---- Background sentiment scraper ----
+sentiment_agg = None  # Module-level reference for API endpoints
+
+
+def background_sentiment_scraper(agg: "SentimentAggregator"):
+    """Runs in a daemon thread. Scrapes forum sentiment every 10 minutes."""
+    logger.info("Sentiment scraper thread started")
+    while True:
+        try:
+            logger.info("--- Sentiment scrape starting ---")
+            agg.update()
+            stats = agg.get_all_sentiments()
+            active = sum(1 for s in stats.values() if s.mention_count > 0)
+            total_mentions = sum(s.mention_count for s in stats.values())
+            logger.info(
+                f"--- Sentiment scrape done: {active} stocks with mentions, "
+                f"{total_mentions} total mentions ---"
+            )
+        except Exception as e:
+            logger.error(f"Sentiment scrape error: {e}", exc_info=True)
+        time.sleep(SENTIMENT_SCRAPE_INTERVAL)
 
 
 # ---- Background scanner ----
@@ -165,9 +195,22 @@ def background_scanner(
                         "ema_score": round(signal.ema_score, 1),
                         "volume_score": round(signal.volume_score, 1),
                         "vol_price_score": round(signal.vol_price_score, 1),
+                        "sentiment_score": round(signal.sentiment_score, 1),
+                        # Sentiment detail (if available)
+                        "sentiment_mentions": 0,
+                        "sentiment_buzz": 0.0,
+                        "sentiment_trend": 0.0,
                         # Sizing
                         "trade_size": trade_size,
                     })
+
+                    # Attach live sentiment data if available
+                    if sentiment_agg:
+                        sent_data = sentiment_agg.get_sentiment(stock_key)
+                        if sent_data and sent_data.mention_count > 0:
+                            results[-1]["sentiment_mentions"] = sent_data.mention_count
+                            results[-1]["sentiment_buzz"] = round(sent_data.buzz_score, 1)
+                            results[-1]["sentiment_trend"] = round(sent_data.mention_trend, 2)
 
                     # Execute paper trade if tradeable
                     if trade_size > 0:
@@ -287,12 +330,101 @@ def api_config():
     })
 
 
+@app.route("/api/sentiment")
+def api_sentiment():
+    """All stock sentiment data."""
+    if not sentiment_agg:
+        return jsonify({"enabled": False, "stocks": {}})
+    all_sent = sentiment_agg.get_all_sentiments()
+    out = {}
+    for key, s in all_sent.items():
+        if s.mention_count == 0:
+            continue
+        out[key] = {
+            "stock_key": s.stock_key,
+            "mention_count": s.mention_count,
+            "sentiment_score": round(s.sentiment_score, 1),
+            "buzz_score": round(s.buzz_score, 1),
+            "mention_trend": round(s.mention_trend, 2),
+            "bullish_count": s.bullish_count,
+            "bearish_count": s.bearish_count,
+            "neutral_count": s.neutral_count,
+            "top_sources": s.top_sources,
+        }
+    return jsonify({"enabled": True, "stocks": out})
+
+
+@app.route("/api/sentiment/trending")
+def api_sentiment_trending():
+    """Top 10 trending stocks by mention count."""
+    if not sentiment_agg:
+        return jsonify({"enabled": False, "trending": []})
+    trending = sentiment_agg.get_trending()
+    out = []
+    for s in trending:
+        sk = s.get("stock_key", "")
+        name = STOCKS.get(sk, {}).get("name", sk)
+        out.append({
+            "stock_key": sk,
+            "name": name,
+            "mention_count": s.get("mentions", 0),
+            "sentiment_score": round(s.get("sentiment_score", 50), 1),
+            "buzz_score": round(s.get("buzz_score", 0), 1),
+            "mention_trend": round(s.get("mention_trend", 0), 2),
+        })
+    return jsonify({"enabled": True, "trending": out})
+
+
+@app.route("/api/sentiment/posts")
+def api_sentiment_posts():
+    """Recent forum posts."""
+    if not sentiment_agg:
+        return jsonify({"enabled": False, "posts": []})
+    limit = request.args.get("limit", 30, type=int)
+    limit = min(limit, 100)
+    posts = sentiment_agg.get_recent_forum_posts(limit=limit)
+    out = []
+    for p in posts:
+        out.append({
+            "source": p.get("source", ""),
+            "text": p.get("text", "")[:200],
+            "timestamp": p.get("time", 0),
+            "stock_mentions": p.get("stock_mentions", []),
+            "raw_sentiment": round(p.get("sentiment", 0), 2),
+            "author": p.get("author", ""),
+            "url": p.get("url", ""),
+        })
+    return jsonify({"enabled": True, "posts": out})
+
+
 # ---- Main ----
 if __name__ == "__main__":
     aggregator = MarketDataAggregator()
-    signal_engine = SignalEngine(aggregator)
+
+    # Initialize sentiment if enabled
+    _sentiment = None
+    if SENTIMENT_ENABLED:
+        try:
+            _sentiment = SentimentAggregator()
+            sentiment_agg = _sentiment  # set module-level ref for API endpoints
+            logger.info("Sentiment aggregator initialized")
+        except Exception as e:
+            logger.warning(f"Sentiment init failed (continuing without): {e}")
+            _sentiment = None
+
+    signal_engine = SignalEngine(aggregator, sentiment_aggregator=_sentiment)
     risk_manager = RiskManager(starting_balance=STARTING_CAPITAL)
     portfolio = Portfolio(starting_capital=STARTING_CAPITAL)
+
+    # Start background sentiment scraper (if enabled)
+    if _sentiment:
+        sentiment_thread = threading.Thread(
+            target=background_sentiment_scraper,
+            args=(_sentiment,),
+            daemon=True,
+        )
+        sentiment_thread.start()
+        logger.info("Background sentiment scraper started (10-min interval)")
 
     # Start background scanner
     scanner_thread = threading.Thread(

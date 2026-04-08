@@ -27,6 +27,7 @@ from config import (
     EXCHANGES,
     POLL_INTERVAL_SECONDS,
     LOG_LEVEL,
+    SENTIMENT_ENABLED,
 )
 from market_data import MarketDataAggregator
 from signals import SignalEngine, Direction
@@ -69,7 +70,7 @@ def print_banner():
 ║  Starting Capital:  $100.00 USD                            ║
 ║  Strategy:          Technical Composite Scoring (0-100)    ║
 ║  Indicators:        Momentum | RSI | VWAP | EMA | Volume   ║
-║  Stocks:            29 across 3 exchanges                  ║
+║  Stocks:            48 across 3 exchanges                  ║
 ║  Risk:              Quarter-Kelly | 5% max per trade       ║
 ║  Drawdown Limit:    10% daily                              ║
 ╚════════════════════════════════════════════════════════════╝
@@ -397,13 +398,33 @@ def main():
         "--reset", action="store_true",
         help="Reset portfolio and trade history"
     )
+    parser.add_argument(
+        "--sentiment", action="store_true",
+        help="Enable forum sentiment analysis (scrapes 6 sources)"
+    )
     args = parser.parse_args()
 
     print_banner()
 
     # Initialize components
     aggregator = MarketDataAggregator()
-    signal_engine = SignalEngine(aggregator)
+
+    # Sentiment (optional)
+    _sentiment = None
+    if args.sentiment or SENTIMENT_ENABLED:
+        try:
+            from sentiment_scraper import SentimentAggregator
+            _sentiment = SentimentAggregator()
+            print("  Sentiment analysis: ENABLED (scraping 6 forum sources)")
+            _sentiment.update()
+            stats = _sentiment.get_all_sentiments()
+            active = sum(1 for s in stats.values() if s.mention_count > 0)
+            print(f"  Initial scrape: {active} stocks with forum mentions")
+        except Exception as e:
+            print(f"  Sentiment init failed (continuing without): {e}")
+            _sentiment = None
+
+    signal_engine = SignalEngine(aggregator, sentiment_aggregator=_sentiment)
     risk_manager = RiskManager(starting_balance=STARTING_CAPITAL)
     portfolio = Portfolio(starting_capital=STARTING_CAPITAL)
 
