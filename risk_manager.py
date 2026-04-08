@@ -71,31 +71,36 @@ class RiskManager:
 
     def kelly_size(self, signal: Signal) -> float:
         """
-        Fractional Kelly Criterion for stock position sizing.
+        Enhanced fractional Kelly Criterion with confidence-weighted sizing.
 
-        For stocks, Kelly formula: f* = (p * b - q) / b
+        Kelly formula: f* = (p * b - q) / b
         where:
-          p = probability of winning (from signal confidence + edge)
+          p = estimated win probability (from signal score + confirmation)
           q = 1 - p
-          b = win/loss ratio (expected gain vs expected loss)
+          b = payoff ratio (expected gain / expected loss)
 
-        We estimate:
-          p from signal confidence (mapped to ~55-70% for strong signals)
-          b from edge magnitude (expected return / expected loss)
+        Enhancements (from Article 1 & 2 concepts):
+        1. Win probability derived from signal score + edge magnitude
+        2. Payoff ratio scaled by edge (higher edge → better risk/reward)
+        3. Confidence weighting: low-confidence signals get further reduced
+        4. Quarter-Kelly baseline with confidence multiplier
         """
         if signal.direction == Direction.HOLD:
             return 0.0
 
-        # Estimate win probability from signal strength
+        # Estimate win probability from signal strength and edge
         # Score 65 → ~55% win rate, score 80+ → ~65% win rate
         score_dist = abs(signal.score - 50) / 50  # 0-1
-        win_prob = 0.50 + score_dist * 0.20  # 50-70%
-        win_prob = min(win_prob, 0.70)
+        base_prob = 0.50 + score_dist * 0.20  # 50-70%
 
-        # Estimate win/loss ratio from edge
-        # Assume risk:reward based on edge magnitude
-        # Edge of 0.05 → b ≈ 1.5 (risk 1 to gain 1.5)
-        b = 1.0 + signal.edge * 10  # edge 0.03 → b=1.3, edge 0.10 → b=2.0
+        # Edge-based probability boost
+        # Higher edge = more confirmation signals aligned = higher probability
+        edge_boost = min(signal.edge * 0.5, 0.10)
+        win_prob = min(base_prob + edge_boost, 0.80)
+
+        # Payoff ratio: scaled by edge magnitude
+        # Edge of 0.03 → b=1.3, edge 0.10 → b=2.0, edge 0.20 → b=3.0
+        b = 1.0 + signal.edge * 10
         b = max(b, 1.0)
         b = min(b, 3.0)
 
@@ -106,8 +111,10 @@ class RiskManager:
         if kelly_f <= 0:
             return 0.0
 
-        # Apply quarter-Kelly (conservative)
-        fraction = kelly_f * KELLY_FRACTION
+        # Confidence-weighted Kelly (Article 2 concept)
+        # High confidence → use more of Kelly; low confidence → reduce further
+        confidence_multiplier = 0.5 + 0.5 * signal.confidence  # 0.5 - 1.0
+        fraction = kelly_f * KELLY_FRACTION * confidence_multiplier
 
         # Convert to USD amount
         raw_size = self.state.balance * fraction

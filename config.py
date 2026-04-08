@@ -56,7 +56,7 @@ STOCKS = {
         "exchange": "KLSE", "sector": "Finance", "enabled": True,
     },
     "PCHEM": {
-        "ticker": "5681.KL", "name": "Petronas Chemicals",
+        "ticker": "5183.KL", "name": "Petronas Chemicals",
         "exchange": "KLSE", "sector": "Energy", "enabled": True,
     },
     "CIMB": {

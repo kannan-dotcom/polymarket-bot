@@ -193,13 +193,32 @@ class SignalEngine:
         vol = snapshot["volatility"]
         vol_factor = self._volatility_filter(vol)
 
-        # Confidence = distance from 50 (neutral) scaled by vol factor
-        raw_confidence = abs(composite_score - 50) / 50  # 0-1
-        confidence = raw_confidence * vol_factor
+        # ---- Confidence-weighted composite (Article 2 concept) ----
+        # Each sub-score's confidence contributes to overall signal confidence
+        # Signals far from neutral (50) with confirming volume = high confidence
+        score_deviations = [abs(s - 50) / 50 for _, s, _ in scores]
+        avg_deviation = np.mean(score_deviations) if score_deviations else 0
+        signal_agreement = 1.0 - np.std(score_deviations) if len(score_deviations) > 1 else 0.5
+        raw_confidence = avg_deviation * signal_agreement * vol_factor
+        confidence = float(np.clip(raw_confidence, 0, 1))
 
-        # ---- Edge: expected return based on score strength ----
-        # Map score distance from 50 to expected edge
-        edge = (composite_score - 50) / 100 * vol_factor  # scaled ±0.5
+        # ---- Edge: probability-based (Article 1 adapted) ----
+        # estimated_prob = our signal's win probability
+        # edge = estimated_prob - market_implied (0.50)
+        score_dist = abs(composite_score - 50) / 50
+        estimated_prob = 0.50 + score_dist * 0.20  # 50-70%
+
+        # Confirmation bonus from volume signals
+        obv_trend = snapshot.get("obv_trend", 0.0)
+        vol_price_confirm = snapshot.get("vol_price_confirm", 0.0)
+        if (composite_score > 50 and obv_trend > 0.2) or (composite_score < 50 and obv_trend < -0.2):
+            estimated_prob += min(abs(obv_trend) * 0.05, 0.05)
+        if (composite_score > 50 and vol_price_confirm > 0.2) or \
+           (composite_score < 50 and vol_price_confirm < -0.2):
+            estimated_prob += min(abs(vol_price_confirm) * 0.05, 0.05)
+        estimated_prob = min(estimated_prob, 0.80)
+
+        edge = (estimated_prob - 0.50) * vol_factor
 
         # ---- Direction ----
         if composite_score >= SIGNAL["buy_threshold"]:

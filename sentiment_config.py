@@ -140,6 +140,115 @@ BEARISH_MS = {
 }
 
 # ============================================================
+# EVENT DETECTION — Company-specific catalysts from social media
+# ============================================================
+# Events that could cause significant price movement
+# Each event type has keywords (EN + MS) and an impact direction/magnitude
+
+EVENT_KEYWORDS = {
+    "new_contract": {
+        "keywords": [
+            "new contract", "awarded contract", "awarded new", "won contract", "secured contract",
+            "contract win", "project award", "new project", "landed deal",
+            "kontrak baru", "dapat kontrak", "projek baru", "menang tender",
+            "letter of award", "LOA", "awarded by", "mou signed", "joint venture",
+            "partnership", "collaboration", "strategic alliance",
+        ],
+        "impact": "bullish",
+        "weight": 2.0,
+    },
+    "contract_loss": {
+        "keywords": [
+            "lost contract", "contract terminated", "contract cancelled",
+            "project cancelled", "deal fell through", "kontrak batal",
+            "terminated", "cancelled order", "order cancellation",
+        ],
+        "impact": "bearish",
+        "weight": 2.0,
+    },
+    "legal_issue": {
+        "keywords": [
+            "lawsuit", "sued", "legal action", "court case", "investigation",
+            "penalty", "fine", "charged", "fraud", "scandal", "corruption",
+            "saman", "mahkamah", "siasatan", "denda", "kes jenayah",
+            "MACC", "SEC", "regulatory action", "compliance issue",
+            "class action", "injunction", "probe", "whistleblower",
+        ],
+        "impact": "bearish",
+        "weight": 2.5,
+    },
+    "earnings_positive": {
+        "keywords": [
+            "record profit", "beat estimates", "exceeded expectations",
+            "strong earnings", "revenue up", "profit surge", "revenue growth",
+            "earnings beat", "above consensus", "untung besar", "hasil rekod",
+            "dividend increase", "special dividend", "bonus issue",
+            "margin expansion", "EPS beat",
+        ],
+        "impact": "bullish",
+        "weight": 2.0,
+    },
+    "earnings_negative": {
+        "keywords": [
+            "profit warning", "missed estimates", "below expectations",
+            "revenue down", "loss reported", "earnings miss", "profit drop",
+            "revenue decline", "margin compression", "rugi", "untung turun",
+            "dividend cut", "no dividend", "write-off", "impairment",
+        ],
+        "impact": "bearish",
+        "weight": 2.0,
+    },
+    "management_change": {
+        "keywords": [
+            "new CEO", "CEO resign", "CEO appointed", "board reshuffle",
+            "management change", "CFO resign", "new chairman",
+            "CEO keluar", "pengarah baru", "lantik CEO",
+            "succession", "interim CEO", "fired CEO",
+        ],
+        "impact": "neutral",  # could go either way
+        "weight": 1.5,
+    },
+    "merger_acquisition": {
+        "keywords": [
+            "acquisition", "takeover", "merger", "buyout", "privatisation",
+            "tender offer", "bid for", "acquired", "acquire stake",
+            "pengambilalihan", "gabung", "beli syarikat",
+            "general offer", "mandatory offer", "RTO",
+        ],
+        "impact": "bullish",
+        "weight": 2.5,
+    },
+    "regulatory": {
+        "keywords": [
+            "new regulation", "policy change", "government contract",
+            "subsidy", "tax incentive", "approved by", "license granted",
+            "permit approved", "kelulusan", "lesen diluluskan",
+            "tariff", "quota", "sanctions", "banned", "restriction",
+        ],
+        "impact": "neutral",
+        "weight": 1.5,
+    },
+    "analyst_upgrade": {
+        "keywords": [
+            "upgrade", "target price raised", "outperform",
+            "strong buy", "top pick", "overweight",
+            "naik target", "recommended", "initiating coverage",
+        ],
+        "impact": "bullish",
+        "weight": 1.5,
+    },
+    "analyst_downgrade": {
+        "keywords": [
+            "downgrade", "target price cut", "underperform",
+            "sell rating", "underweight", "turun target",
+            "reduce", "not recommended", "drop coverage",
+        ],
+        "impact": "bearish",
+        "weight": 1.5,
+    },
+}
+
+# ============================================================
 # PERSISTENCE
 # ============================================================
 SENTIMENT_CACHE_FILE = "sentiment_cache.json"

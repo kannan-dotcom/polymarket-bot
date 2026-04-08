@@ -29,6 +29,7 @@ from sentiment_config import (
     SENTIMENT_CACHE_FILE,
     BULLISH_EN, BEARISH_EN,
     BULLISH_MS, BEARISH_MS,
+    EVENT_KEYWORDS,
 )
 
 logger = logging.getLogger("sentiment")
@@ -62,6 +63,10 @@ class StockSentiment:
     top_sources: list[str] = field(default_factory=list)
     last_updated: float = 0.0
     recent_posts: list[dict] = field(default_factory=list)
+    # Event detection fields
+    events: list[dict] = field(default_factory=list)  # detected company events
+    event_impact: float = 0.0       # net event impact on sentiment (-1 to +1)
+    has_catalyst: bool = False       # True if significant event detected
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -130,6 +135,30 @@ class SentimentAnalyzer:
 
         raw = (bullish_sum - bearish_sum) / total
         return max(-1.0, min(1.0, raw))
+
+    def detect_events(self, text: str) -> list[dict]:
+        """
+        Detect company-specific events in text that could impact stock price.
+        Returns list of detected events with type, impact direction, and weight.
+
+        Checks for: new contracts, terminations, legal issues, earnings,
+        management changes, M&A, regulatory, analyst rating changes.
+        """
+        text_lower = text.lower()
+        detected = []
+
+        for event_type, cfg in EVENT_KEYWORDS.items():
+            for keyword in cfg["keywords"]:
+                if keyword.lower() in text_lower:
+                    detected.append({
+                        "type": event_type,
+                        "keyword": keyword,
+                        "impact": cfg["impact"],
+                        "weight": cfg["weight"],
+                    })
+                    break  # one match per event type is enough
+
+        return detected
 
     @staticmethod
     def raw_to_score(raw: float) -> float:
@@ -487,6 +516,18 @@ class SentimentAggregator:
                     for post in posts:
                         post.stock_mentions = self.analyzer.extract_stock_mentions(post.text)
                         post.raw_sentiment = self.analyzer.analyze_text(post.text)
+                        # Detect events and boost sentiment accordingly
+                        events = self.analyzer.detect_events(post.text)
+                        if events:
+                            event_boost = 0.0
+                            for ev in events:
+                                if ev["impact"] == "bullish":
+                                    event_boost += 0.3 * ev["weight"]
+                                elif ev["impact"] == "bearish":
+                                    event_boost -= 0.3 * ev["weight"]
+                            # Blend event boost into raw sentiment
+                            post.raw_sentiment = max(-1.0, min(1.0,
+                                post.raw_sentiment + event_boost * 0.5))
                     new_posts.extend(posts)
             except Exception as e:
                 logger.error(f"Scraper {scraper.source_name} failed: {e}")
@@ -557,6 +598,10 @@ class SentimentAggregator:
             neutral = 0
             sources = set()
 
+            # Event detection aggregation
+            all_events = []
+            event_impact_sum = 0.0
+
             for post in posts:
                 weight = self._time_decay_weight(post.timestamp, decay_hours)
                 weighted_sentiments.append(post.raw_sentiment * weight)
@@ -569,11 +614,32 @@ class SentimentAggregator:
                 else:
                     neutral += 1
 
+                # Detect events in each post
+                events = self.analyzer.detect_events(post.text)
+                for ev in events:
+                    ev["stock_key"] = stock_key
+                    ev["post_time"] = post.timestamp
+                    ev["source"] = post.source
+                    all_events.append(ev)
+                    if ev["impact"] == "bullish":
+                        event_impact_sum += ev["weight"]
+                    elif ev["impact"] == "bearish":
+                        event_impact_sum -= ev["weight"]
+
             # Average weighted sentiment
             if weighted_sentiments:
                 avg_raw = sum(weighted_sentiments) / len(weighted_sentiments)
             else:
                 avg_raw = 0.0
+
+            # Normalize event impact to -1 to +1
+            if all_events:
+                event_impact = max(-1.0, min(1.0, event_impact_sum / len(all_events)))
+                # Boost sentiment score by event impact (20% weight)
+                avg_raw = avg_raw * 0.8 + event_impact * 0.2
+                avg_raw = max(-1.0, min(1.0, avg_raw))
+            else:
+                event_impact = 0.0
 
             # Recent posts within 24h
             recent_24h = [p for p in posts if p.timestamp >= cutoff_24h]
@@ -599,6 +665,19 @@ class SentimentAggregator:
                 for p in sorted_posts
             ]
 
+            # Deduplicate events by type (keep most recent per type)
+            unique_events = {}
+            for ev in sorted(all_events, key=lambda e: e.get("post_time", 0), reverse=True):
+                if ev["type"] not in unique_events:
+                    unique_events[ev["type"]] = {
+                        "type": ev["type"],
+                        "keyword": ev["keyword"],
+                        "impact": ev["impact"],
+                        "source": ev.get("source", ""),
+                        "time": ev.get("post_time", 0),
+                    }
+            event_list = list(unique_events.values())
+
             sentiments[stock_key] = StockSentiment(
                 stock_key=stock_key,
                 mention_count=len(posts),
@@ -611,6 +690,9 @@ class SentimentAggregator:
                 top_sources=sorted(sources),
                 last_updated=now,
                 recent_posts=recent_display,
+                events=event_list,
+                event_impact=round(event_impact, 2),
+                has_catalyst=len(event_list) > 0,
             )
 
         self._sentiments = sentiments

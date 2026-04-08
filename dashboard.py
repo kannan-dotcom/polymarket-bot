@@ -27,6 +27,7 @@ from market_data import MarketDataAggregator
 from signals import SignalEngine, Direction
 from risk_manager import RiskManager
 from portfolio import Portfolio
+from price_analysis import PriceAnalyzer
 
 if SENTIMENT_ENABLED:
     from sentiment_scraper import SentimentAggregator
@@ -79,8 +80,9 @@ class ScannerState:
             }
 
 
-# ---- Background sentiment scraper ----
-sentiment_agg = None  # Module-level reference for API endpoints
+# ---- Module-level references for API endpoints ----
+sentiment_agg = None
+price_analyzer = None
 
 
 def background_sentiment_scraper(agg: "SentimentAggregator"):
@@ -211,6 +213,43 @@ def background_scanner(
                             results[-1]["sentiment_mentions"] = sent_data.mention_count
                             results[-1]["sentiment_buzz"] = round(sent_data.buzz_score, 1)
                             results[-1]["sentiment_trend"] = round(sent_data.mention_trend, 2)
+                            # Attach event data
+                            results[-1]["events"] = sent_data.events
+                            results[-1]["event_impact"] = sent_data.event_impact
+                            results[-1]["has_catalyst"] = sent_data.has_catalyst
+
+                    # Attach price targets
+                    if price_analyzer:
+                        try:
+                            targets = price_analyzer.analyze(
+                                ticker,
+                                signal_score=signal.score,
+                                signal_confidence=signal.confidence,
+                            )
+                            if targets:
+                                results[-1]["price_targets"] = {
+                                    "buy_target": round(targets.buy_target, 4),
+                                    "buy_strong": round(targets.buy_strong, 4),
+                                    "sell_target": round(targets.sell_target, 4),
+                                    "sell_strong": round(targets.sell_strong, 4),
+                                    "hold_low": round(targets.hold_low, 4),
+                                    "hold_high": round(targets.hold_high, 4),
+                                    "predicted_direction": targets.predicted_direction,
+                                    "predicted_move_pct": round(targets.predicted_move_pct, 4),
+                                    "predicted_price": round(targets.predicted_price, 4),
+                                    "prediction_confidence": round(targets.prediction_confidence, 4),
+                                    "support_1": round(targets.support_1, 4),
+                                    "support_2": round(targets.support_2, 4),
+                                    "resistance_1": round(targets.resistance_1, 4),
+                                    "resistance_2": round(targets.resistance_2, 4),
+                                    "avg_daily_range_pct": round(targets.avg_daily_range_pct, 4),
+                                    "volume_poc": round(targets.volume_profile_poc, 4),
+                                    "edge": round(targets.edge, 4),
+                                    "kelly_optimal_pct": round(targets.kelly_optimal_pct, 2),
+                                    "win_probability": round(targets.estimated_win_prob, 4),
+                                }
+                        except Exception as pe:
+                            logger.debug(f"Price analysis error for {stock_key}: {pe}")
 
                     # Execute paper trade if tradeable
                     if trade_size > 0:
@@ -350,6 +389,9 @@ def api_sentiment():
             "bearish_count": s.bearish_count,
             "neutral_count": s.neutral_count,
             "top_sources": s.top_sources,
+            "events": s.events,
+            "event_impact": s.event_impact,
+            "has_catalyst": s.has_catalyst,
         }
     return jsonify({"enabled": True, "stocks": out})
 
@@ -373,6 +415,57 @@ def api_sentiment_trending():
             "mention_trend": round(s.get("mention_trend", 0), 2),
         })
     return jsonify({"enabled": True, "trending": out})
+
+
+@app.route("/api/price_targets/<stock_key>")
+def api_price_targets(stock_key):
+    """Price targets for a specific stock."""
+    if not price_analyzer:
+        return jsonify({"error": "Price analyzer not initialized"}), 503
+    cfg = STOCKS.get(stock_key.upper())
+    if not cfg:
+        return jsonify({"error": f"Unknown stock: {stock_key}"}), 404
+    ticker = cfg["ticker"]
+    # Get signal score for this stock
+    results = scanner_state.get_results()
+    sig_score = 50.0
+    sig_conf = 0.0
+    for r in results.get("stocks", []):
+        if r.get("stock_key") == stock_key.upper():
+            sig_score = r.get("score", 50.0)
+            sig_conf = r.get("confidence", 0.0)
+            break
+    targets = price_analyzer.analyze(ticker, signal_score=sig_score,
+                                      signal_confidence=sig_conf)
+    if not targets:
+        return jsonify({"error": "Insufficient data for analysis"}), 404
+    return jsonify(targets.to_dict())
+
+
+@app.route("/api/events")
+def api_events():
+    """All detected company events across stocks."""
+    if not sentiment_agg:
+        return jsonify({"enabled": False, "events": []})
+    all_sent = sentiment_agg.get_all_sentiments()
+    events = []
+    for key, s in all_sent.items():
+        if not s.events:
+            continue
+        name = STOCKS.get(key, {}).get("name", key)
+        for ev in s.events:
+            events.append({
+                "stock_key": key,
+                "name": name,
+                "event_type": ev.get("type", ""),
+                "keyword": ev.get("keyword", ""),
+                "impact": ev.get("impact", "neutral"),
+                "source": ev.get("source", ""),
+                "time": ev.get("time", 0),
+            })
+    # Sort by time descending
+    events.sort(key=lambda e: e.get("time", 0), reverse=True)
+    return jsonify({"enabled": True, "events": events[:50]})
 
 
 @app.route("/api/sentiment/posts")
@@ -415,6 +508,10 @@ if __name__ == "__main__":
     signal_engine = SignalEngine(aggregator, sentiment_aggregator=_sentiment)
     risk_manager = RiskManager(starting_balance=STARTING_CAPITAL)
     portfolio = Portfolio(starting_capital=STARTING_CAPITAL)
+
+    # Initialize price analyzer
+    price_analyzer = PriceAnalyzer(aggregator)
+    logger.info("Price analyzer initialized")
 
     # Start background sentiment scraper (if enabled)
     if _sentiment:
