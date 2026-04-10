@@ -665,6 +665,7 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
       <div id="authError" class="auth-error"></div>
       <input class="auth-input" id="authEmail" type="email" placeholder="Email address" autocomplete="email">
       <input class="auth-input" id="authPassword" type="password" placeholder="Password" autocomplete="current-password">
+      <input class="auth-input" id="authPasswordConfirm" type="password" placeholder="Confirm password" autocomplete="new-password" style="display:none">
       <button class="auth-btn" id="authSubmitBtn" onclick="authSubmit()">Sign In</button>
       <div class="auth-toggle">
         <span id="authToggleText">Don't have an account?</span>
@@ -1070,6 +1071,7 @@ function hideAuthModal() {
   $('#authOverlay').style.display = 'none';
   $('#authEmail').value = '';
   $('#authPassword').value = '';
+  $('#authPasswordConfirm').value = '';
   $('#authError').textContent = '';
 }
 function toggleAuthMode() {
@@ -1077,6 +1079,9 @@ function toggleAuthMode() {
   $('#authSubmitBtn').textContent = authMode === 'login' ? 'Sign In' : 'Sign Up';
   $('#authToggleText').textContent = authMode === 'login' ? "Don't have an account?" : 'Already have an account?';
   $('#authToggleLink').textContent = authMode === 'login' ? 'Sign Up' : 'Sign In';
+  $('#authPasswordConfirm').style.display = authMode === 'signup' ? '' : 'none';
+  $('#authPasswordConfirm').value = '';
+  $('#authPassword').autocomplete = authMode === 'signup' ? 'new-password' : 'current-password';
   $('#authError').textContent = '';
 }
 async function authSubmit() {
@@ -1088,24 +1093,37 @@ async function authSubmit() {
     console.error('sbClient is null. SUPABASE_URL:', SUPABASE_URL, 'SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? 'set' : 'empty');
     return;
   }
+  // Confirm password check for signup
+  if (authMode === 'signup') {
+    const pwConfirm = $('#authPasswordConfirm').value;
+    if (pw !== pwConfirm) {
+      $('#authError').textContent = 'Passwords do not match';
+      return;
+    }
+    if (pw.length < 6) {
+      $('#authError').textContent = 'Password must be at least 6 characters';
+      return;
+    }
+  }
   $('#authSubmitBtn').disabled = true;
   $('#authError').textContent = '';
   try {
-    let res;
     if (authMode === 'signup') {
-      res = await sbClient.auth.signUp({email, password: pw});
+      // Step 1: Create account with password
+      const res = await sbClient.auth.signUp({email, password: pw});
       if (res.error) throw res.error;
-      // Send OTP for email verification
+      // Step 2: Send OTP code for email verification
       pendingOtpEmail = email;
-      await sbClient.auth.signInWithOtp({email});
+      const otpRes = await sbClient.auth.signInWithOtp({email});
+      if (otpRes.error) throw otpRes.error;
       showOtpStep(email);
     } else {
-      res = await sbClient.auth.signInWithPassword({email, password: pw});
+      // Login: Sign in with password directly
+      const res = await sbClient.auth.signInWithPassword({email, password: pw});
       if (res.error) throw res.error;
-      // Send OTP for 2FA
-      pendingOtpEmail = email;
-      await sbClient.auth.signInWithOtp({email});
-      showOtpStep(email);
+      // Password auth succeeded — user is logged in
+      // onAuthStateChange will fire and call onAuthSuccess
+      hideAuthModal();
     }
   } catch (err) {
     $('#authError').textContent = err.message || 'Authentication failed';
