@@ -655,8 +655,9 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
 <body>
 
 <!-- ═══════════ Auth Modal ═══════════ -->
-<div class="auth-overlay" id="authOverlay" style="display:none">
-  <div class="auth-modal">
+<div class="auth-overlay" id="authOverlay" style="display:none" onclick="if(event.target===this)hideAuthModal()">
+  <div class="auth-modal" style="position:relative">
+    <button onclick="hideAuthModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:var(--text-secondary);font-size:22px;font-weight:700;cursor:pointer;line-height:1;padding:4px 8px;border-radius:4px;transition:color .2s" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-secondary)'">&times;</button>
     <!-- Step 1: Email + Password -->
     <div id="authStep1">
       <h2>BURSA KINETIC</h2>
@@ -1015,8 +1016,8 @@ let fundamentalsData = {};
 let collapsedSectors = {};
 
 // ═══════════ Auth & User State ═══════════
-const SUPABASE_URL = '{{ supabase_url }}';
-const SUPABASE_ANON_KEY = '{{ supabase_anon_key }}';
+const SUPABASE_URL = '{{ supabase_url | safe }}';
+const SUPABASE_ANON_KEY = '{{ supabase_anon_key | safe }}';
 let sbClient = null;
 let currentUser = null;
 let userHoldings = [];
@@ -1024,17 +1025,31 @@ let showAllStocks = false;
 let authMode = 'login'; // 'login' or 'signup'
 let pendingOtpEmail = '';
 
+console.log('[BursaKinetic] Supabase URL:', SUPABASE_URL ? 'set' : 'EMPTY', '| Anon key:', SUPABASE_ANON_KEY ? 'set' : 'EMPTY', '| supabase global:', typeof supabase);
 if (SUPABASE_URL && SUPABASE_ANON_KEY && typeof supabase !== 'undefined') {
-  sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  try {
+    const createFn = supabase.createClient || (supabase.default && supabase.default.createClient);
+    if (createFn) {
+      sbClient = createFn(SUPABASE_URL, SUPABASE_ANON_KEY);
+      console.log('[BursaKinetic] Supabase client created OK');
+    } else {
+      console.error('[BursaKinetic] supabase.createClient not found. Keys:', Object.keys(supabase));
+    }
+  } catch(e) {
+    console.error('[BursaKinetic] Supabase init error:', e);
+  }
+}
+if (sbClient) {
   sbClient.auth.getSession().then(({data}) => {
     if (data.session) onAuthSuccess(data.session.user);
     else showLanding();
-  });
+  }).catch(e => { console.error('[BursaKinetic] getSession error:', e); showLanding(); });
   sbClient.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_IN' && session) onAuthSuccess(session.user);
     else if (event === 'SIGNED_OUT') onSignOut();
   });
 } else {
+  console.warn('[BursaKinetic] No Supabase client — running in unauthenticated mode');
   showLanding();
 }
 
@@ -1068,6 +1083,11 @@ async function authSubmit() {
   const email = $('#authEmail').value.trim();
   const pw = $('#authPassword').value;
   if (!email || !pw) return;
+  if (!sbClient) {
+    $('#authError').textContent = 'Authentication service unavailable. Please check configuration.';
+    console.error('sbClient is null. SUPABASE_URL:', SUPABASE_URL, 'SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? 'set' : 'empty');
+    return;
+  }
   $('#authSubmitBtn').disabled = true;
   $('#authError').textContent = '';
   try {
