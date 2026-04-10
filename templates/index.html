@@ -3,10 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bursa Kinetic</title>
+<title>Bursa Kinetic &mdash; AI-Powered KLSE Stock Analysis &amp; Portfolio Scanner</title>
+<meta name="description" content="Free AI-powered stock analysis for Bursa Malaysia (KLSE). Upload your portfolio screenshot, get instant AI recommendations for 144+ Malaysian stocks.">
+<meta name="keywords" content="KLSE, Bursa Malaysia, stock analysis, AI stock scanner, Malaysian stocks, portfolio analysis, stock recommendation">
+<link rel="canonical" href="https://bursakinetic.com/">
+<meta property="og:title" content="Bursa Kinetic &mdash; AI Stock Analysis for KLSE">
+<meta property="og:description" content="Upload your portfolio screenshot and get AI-powered stock recommendations for Bursa Malaysia.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bursakinetic.com/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Bursa Kinetic &mdash; AI Stock Analysis for KLSE">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"Bursa Kinetic","description":"AI-powered stock analysis for Bursa Malaysia (KLSE)","applicationCategory":"FinanceApplication","operatingSystem":"Web","offers":{"@type":"Offer","price":"0","priceCurrency":"MYR"}}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -536,27 +547,289 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
 .ai-loading .spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--glass-border);
   border-top-color:var(--accent);border-radius:50%;animation:aispin .8s linear infinite}
 @keyframes aispin{to{transform:rotate(360deg)}}
+
+/* ═══════════ Auth Modal ═══════════ */
+.auth-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.6);
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.auth-modal{width:400px;max-width:90vw;padding:var(--sp-8);
+  background:var(--bg-1);border:1px solid var(--glass-border);
+  border-radius:var(--radius-lg);box-shadow:var(--shadow-lg)}
+.auth-modal h2{text-align:center;font-size:20px;margin-bottom:4px;
+  background:linear-gradient(135deg,var(--accent),var(--cyan));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.auth-modal .auth-sub{text-align:center;font-size:11px;color:var(--text-tertiary);margin-bottom:var(--sp-6)}
+.auth-input{width:100%;padding:10px 14px;margin-bottom:var(--sp-3);
+  background:var(--bg-2);border:1px solid var(--glass-border);
+  border-radius:var(--radius-sm);color:var(--text-primary);
+  font-family:inherit;font-size:13px;outline:none;transition:border-color .2s}
+.auth-input:focus{border-color:var(--accent)}
+.auth-btn{width:100%;padding:10px;border:none;border-radius:var(--radius-sm);
+  background:linear-gradient(135deg,var(--accent),#2563eb);color:#fff;
+  font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.auth-btn:hover{opacity:0.9}
+.auth-btn:disabled{opacity:0.5;cursor:not-allowed}
+.auth-toggle{text-align:center;margin-top:var(--sp-4);font-size:12px;color:var(--text-tertiary)}
+.auth-toggle a{color:var(--accent);cursor:pointer;text-decoration:none}
+.auth-error{color:var(--red);font-size:11px;margin-bottom:var(--sp-2);text-align:center;min-height:16px}
+.auth-user-pill{display:flex;align-items:center;gap:6px;cursor:pointer;
+  padding:3px 10px;border-radius:100px;background:var(--glass-bg);
+  border:1px solid var(--glass-border);font-size:11px;color:var(--text-secondary);transition:border-color .2s}
+.auth-user-pill:hover{border-color:var(--accent)}
+
+/* OTP input boxes */
+.otp-row{display:flex;gap:8px;justify-content:center;margin:var(--sp-4) 0}
+.otp-box{width:42px;height:48px;text-align:center;font-size:20px;font-weight:700;
+  background:var(--bg-2);border:1px solid var(--glass-border);border-radius:var(--radius-sm);
+  color:var(--text-primary);font-family:inherit;outline:none;transition:border-color .2s}
+.otp-box:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-muted)}
+
+/* ═══════════ Landing Page ═══════════ */
+.landing-hero{text-align:center;padding:60px 20px 40px}
+.landing-hero h1{font-size:36px;font-weight:700;line-height:1.2;margin-bottom:var(--sp-3);
+  background:linear-gradient(135deg,#fff 0%,var(--accent) 50%,var(--cyan) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.landing-hero p{font-size:15px;color:var(--text-secondary);max-width:540px;margin:0 auto var(--sp-6)}
+.landing-cta{display:inline-block;padding:12px 32px;border-radius:var(--radius-sm);
+  background:linear-gradient(135deg,var(--accent),#2563eb);color:#fff;
+  font-weight:600;font-size:14px;text-decoration:none;cursor:pointer;border:none;
+  font-family:inherit;transition:opacity .2s,transform .1s}
+.landing-cta:hover{opacity:0.9;transform:translateY(-1px)}
+.feature-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-4);
+  max-width:900px;margin:0 auto var(--sp-8);padding:0 20px}
+.feature-card{text-align:center;padding:var(--sp-5) var(--sp-4)}
+.feature-card .feat-icon{font-size:28px;margin-bottom:var(--sp-2)}
+.feature-card h3{font-size:13px;font-weight:600;margin-bottom:var(--sp-1)}
+.feature-card p{font-size:11px;color:var(--text-tertiary);line-height:1.5}
+.landing-preview{max-width:900px;margin:0 auto;padding:0 20px var(--sp-8)}
+.landing-preview h2{font-size:14px;font-weight:600;margin-bottom:var(--sp-3);color:var(--text-secondary)}
+.landing-footer{text-align:center;padding:var(--sp-6) 20px;border-top:1px solid var(--glass-border);
+  font-size:10px;color:var(--text-tertiary);margin-top:var(--sp-8)}
+@media(max-width:700px){.feature-grid{grid-template-columns:repeat(2,1fr)}.landing-hero h1{font-size:26px}}
+
+/* ═══════════ Upload Area ═══════════ */
+.upload-area{border:2px dashed var(--glass-border);border-radius:var(--radius-md);
+  padding:var(--sp-8) var(--sp-6);text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+.upload-area:hover{border-color:var(--accent);background:var(--accent-muted)}
+.upload-area.dragover{border-color:var(--accent);background:rgba(59,130,246,0.12)}
+.upload-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:var(--sp-3);margin-top:var(--sp-3)}
+.upload-thumb{position:relative;border-radius:var(--radius-sm);overflow:hidden;
+  border:1px solid var(--glass-border);aspect-ratio:16/9}
+.upload-thumb img{width:100%;height:100%;object-fit:cover}
+.upload-thumb .del-btn{position:absolute;top:4px;right:4px;
+  background:rgba(0,0,0,0.7);border:none;color:var(--red);
+  border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:13px;
+  display:flex;align-items:center;justify-content:center}
+
+/* ═══════════ Portfolio Risk Dashboard ═══════════ */
+.risk-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-3);margin-bottom:var(--sp-4)}
+.risk-card{padding:var(--sp-3) var(--sp-4);text-align:center}
+.risk-card .risk-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-tertiary);margin-bottom:var(--sp-1)}
+.risk-card .risk-val{font-size:22px;font-weight:700}
+.risk-card .risk-sub{font-size:10px;color:var(--text-tertiary);margin-top:2px}
+.risk-narrative{padding:var(--sp-4);line-height:1.7;font-size:12px;color:var(--text-secondary)}
+.risk-narrative strong{color:var(--text-primary)}
+.holdings-table{width:100%;border-collapse:collapse;font-size:12px}
+.holdings-table th{text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--text-tertiary);border-bottom:1px solid var(--glass-border)}
+.holdings-table td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.extraction-progress{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-4);font-size:12px;color:var(--text-secondary)}
+.extraction-progress .bar{flex:1;height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden}
+.extraction-progress .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--cyan));
+  border-radius:3px;transition:width .3s ease}
+
+/* Per-stock AI cards */
+.stock-ai-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--sp-3)}
+.stock-ai-card{padding:var(--sp-4)}
+.stock-ai-card .sac-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-2)}
+.stock-ai-card .sac-name{font-weight:700;font-size:13px}
+.stock-ai-card .sac-rec{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
+.sac-rec.buy{background:var(--green-muted);color:var(--green)}
+.sac-rec.sell{background:var(--red-muted);color:var(--red)}
+.sac-rec.hold{background:var(--yellow-muted);color:var(--yellow)}
+.stock-ai-card .sac-detail{font-size:11px;color:var(--text-tertiary);line-height:1.5}
+@media(max-width:900px){.risk-cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.risk-cards{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 
+<!-- ═══════════ Auth Modal ═══════════ -->
+<div class="auth-overlay" id="authOverlay" style="display:none">
+  <div class="auth-modal">
+    <!-- Step 1: Email + Password -->
+    <div id="authStep1">
+      <h2>BURSA KINETIC</h2>
+      <div class="auth-sub">AI-Powered KLSE Stock Analysis</div>
+      <div id="authError" class="auth-error"></div>
+      <input class="auth-input" id="authEmail" type="email" placeholder="Email address" autocomplete="email">
+      <input class="auth-input" id="authPassword" type="password" placeholder="Password" autocomplete="current-password">
+      <button class="auth-btn" id="authSubmitBtn" onclick="authSubmit()">Sign In</button>
+      <div class="auth-toggle">
+        <span id="authToggleText">Don't have an account?</span>
+        <a onclick="toggleAuthMode()" id="authToggleLink">Sign Up</a>
+      </div>
+    </div>
+    <!-- Step 2: OTP Verification -->
+    <div id="authStep2" style="display:none">
+      <h2>Verify Your Email</h2>
+      <div class="auth-sub" id="otpSubtext">We sent a 6-digit code to your email</div>
+      <div id="otpError" class="auth-error"></div>
+      <div class="otp-row">
+        <input class="otp-box" id="otp1" maxlength="1" inputmode="numeric" autofocus>
+        <input class="otp-box" id="otp2" maxlength="1" inputmode="numeric">
+        <input class="otp-box" id="otp3" maxlength="1" inputmode="numeric">
+        <input class="otp-box" id="otp4" maxlength="1" inputmode="numeric">
+        <input class="otp-box" id="otp5" maxlength="1" inputmode="numeric">
+        <input class="otp-box" id="otp6" maxlength="1" inputmode="numeric">
+      </div>
+      <button class="auth-btn" id="otpVerifyBtn" onclick="verifyOtp()">Verify</button>
+      <div class="auth-toggle" style="margin-top:var(--sp-3)">
+        <a onclick="resendOtp()" id="resendLink">Resend Code</a>
+        <span id="resendTimer" style="display:none;color:var(--text-tertiary)"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Header ═══════════ -->
-<div class="header">
+<header class="header">
   <h1>BURSA KINETIC</h1>
   <div class="header-center">
-    <div class="mode-toggle">
+    <div class="mode-toggle" id="modeToggleWrap">
       <button class="mode-btn active" id="modeDaily" onclick="setMode('daily')">DAILY TRADE</button>
       <button class="mode-btn" id="modeInvest" onclick="setMode('invest')">INVESTMENT</button>
     </div>
   </div>
   <div class="header-right">
-    <span class="status-pill"><span class="status-dot ok" id="statusDot"></span><span id="statusText">Initialising...</span></span>
-    <span>Cycle <strong id="cycleNum" style="font-feature-settings:'tnum' 1">0</strong></span>
+    <span class="status-pill" id="statusPill"><span class="status-dot ok" id="statusDot"></span><span id="statusText">Initialising...</span></span>
+    <span id="cycleWrap">Cycle <strong id="cycleNum" style="font-feature-settings:'tnum' 1">0</strong></span>
     <span id="lastScan" style="font-feature-settings:'tnum' 1">--</span>
+    <!-- Auth buttons -->
+    <button class="auth-user-pill" id="loginBtn" onclick="showAuthModal()">Sign In</button>
+    <div class="auth-user-pill" id="userPill" style="display:none" onclick="toggleUserMenu()">
+      <span id="userEmail" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      <span style="font-size:8px">&#9660;</span>
+    </div>
+    <div id="userMenu" style="display:none;position:absolute;right:16px;top:48px;z-index:300;
+         background:var(--bg-1);border:1px solid var(--glass-border);border-radius:var(--radius-sm);
+         padding:var(--sp-2);min-width:140px;box-shadow:var(--shadow-lg)">
+      <div style="padding:6px 10px;cursor:pointer;font-size:11px;border-radius:4px;color:var(--red)"
+           onmouseover="this.style.background='var(--glass-bg)'" onmouseout="this.style.background=''"
+           onclick="authSignOut()">Sign Out</div>
+    </div>
   </div>
-</div>
+</header>
 
-<div class="container">
+<!-- ═══════════ Landing Page (unauthenticated) ═══════════ -->
+<main id="landingPage">
+  <section class="landing-hero">
+    <h1>AI-Powered Stock Intelligence<br>for Bursa Malaysia</h1>
+    <p>Upload your brokerage portfolio screenshot. Our AI extracts your holdings, analyses each stock, and scores your portfolio risk. 144 KLSE stocks. 3-tier AI engine.</p>
+    <button class="landing-cta" onclick="showAuthModal()">Get Started Free &rarr;</button>
+  </section>
+  <section class="feature-grid">
+    <div class="glass feature-card">
+      <div class="feat-icon">&#128247;</div>
+      <h3>Upload Screenshot</h3>
+      <p>Drop your brokerage portfolio screenshot from any Malaysian broker</p>
+    </div>
+    <div class="glass feature-card">
+      <div class="feat-icon">&#129302;</div>
+      <h3>AI Extracts Holdings</h3>
+      <p>GPT-4o Vision reads your screenshot and identifies all stock positions</p>
+    </div>
+    <div class="glass feature-card">
+      <div class="feat-icon">&#128200;</div>
+      <h3>Stock Recommendations</h3>
+      <p>Per-stock BUY/SELL/HOLD analysis powered by Claude + GPT-4o</p>
+    </div>
+    <div class="glass feature-card">
+      <div class="feat-icon">&#128737;</div>
+      <h3>Portfolio Risk Score</h3>
+      <p>Concentration, sector diversification, and AI rebalancing suggestions</p>
+    </div>
+  </section>
+  <section class="landing-preview">
+    <h2>Live Scanner Preview</h2>
+    <div id="landingPreview" class="glass" style="padding:var(--sp-4);overflow-x:auto">
+      <table style="width:100%;font-size:11px;border-collapse:collapse">
+        <thead><tr style="color:var(--text-tertiary);text-transform:uppercase;font-size:9px;letter-spacing:.5px">
+          <th style="padding:6px 10px;text-align:left">Stock</th>
+          <th style="padding:6px 10px;text-align:right">Price</th>
+          <th style="padding:6px 10px;text-align:right">Change</th>
+          <th style="padding:6px 10px;text-align:center">Signal</th>
+          <th style="padding:6px 10px;text-align:center">Score</th>
+        </tr></thead>
+        <tbody id="landingTableBody">
+          <tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-tertiary)">Loading scanner...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <footer class="landing-footer">
+    Powered by Claude AI + GPT-4o &middot; 144 KLSE Stocks &middot; Free to Use<br>
+    <span style="color:var(--text-tertiary);font-size:9px;margin-top:4px;display:inline-block">&copy; 2026 Bursa Kinetic. Not financial advice.</span>
+  </footer>
+</main>
+
+<!-- ═══════════ Dashboard (authenticated) ═══════════ -->
+<div class="container" id="dashboardContainer" style="display:none">
+
+  <!-- ═══════════ Upload Your Portfolio (first thing after login) ═══════════ -->
+  <section id="uploadSection" style="margin-bottom:var(--sp-4)">
+    <div class="section-header">Upload Your Portfolio <span class="section-badge">AI SCAN</span></div>
+    <div class="glass" style="padding:var(--sp-4)">
+      <div class="upload-area" id="uploadArea"
+           onclick="document.getElementById('uploadInput').click()"
+           ondragover="event.preventDefault();this.classList.add('dragover')"
+           ondragleave="this.classList.remove('dragover')"
+           ondrop="handleDrop(event)">
+        <input type="file" id="uploadInput" accept="image/*" multiple style="display:none" onchange="handleUpload(this.files)">
+        <div style="font-size:28px;margin-bottom:var(--sp-2);color:var(--text-tertiary)">&#128247;</div>
+        <div style="color:var(--text-secondary);font-size:13px;font-weight:500">Drop your brokerage portfolio screenshot here</div>
+        <div style="color:var(--text-tertiary);font-size:11px;margin-top:var(--sp-1)">or click to browse &middot; PNG, JPG up to 5MB</div>
+      </div>
+      <div class="upload-gallery" id="uploadGallery"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ AI Extraction Results ═══════════ -->
+  <section id="extractionSection" style="display:none;margin-bottom:var(--sp-4)">
+    <div class="section-header">Extracted Holdings <span class="section-badge" id="extractionBadge">0 STOCKS</span></div>
+    <div class="glass" style="padding:var(--sp-4)">
+      <div class="extraction-progress" id="extractionProgress" style="display:none">
+        <span>AI analysing screenshot...</span>
+        <div class="bar"><div class="bar-fill" id="extractionBar" style="width:0%"></div></div>
+      </div>
+      <table class="holdings-table" id="holdingsTable">
+        <thead><tr>
+          <th>Stock</th><th>Ticker</th><th style="text-align:right">Shares</th>
+          <th style="text-align:right">Avg Price</th><th style="text-align:right">Value (RM)</th>
+          <th style="text-align:center">AI</th>
+        </tr></thead>
+        <tbody id="holdingsBody"></tbody>
+      </table>
+      <div style="text-align:right;margin-top:var(--sp-3)">
+        <button class="auth-btn" style="width:auto;padding:8px 24px;font-size:12px" onclick="analyzePortfolioRisk()" id="analyzePortfolioBtn">
+          Analyse My Portfolio &rarr;
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Portfolio Risk Dashboard ═══════════ -->
+  <section id="riskSection" style="display:none;margin-bottom:var(--sp-4)">
+    <div class="section-header">Portfolio Risk Analysis <span class="section-badge" id="riskBadge">--</span></div>
+    <div class="risk-cards" id="riskCards"></div>
+    <div class="glass" id="riskNarrative" style="display:none"></div>
+  </section>
+
+  <!-- ═══════════ Per-Stock AI Analysis ═══════════ -->
+  <section id="stockAiSection" style="display:none;margin-bottom:var(--sp-4)">
+    <div class="section-header">Stock-Level AI Recommendations <span class="section-badge" id="stockAiBadge">--</span></div>
+    <div class="stock-ai-grid" id="stockAiGrid"></div>
+  </section>
 
   <!-- ═══════════ AI Stock Search (Kinetic Observatory) ═══════════ -->
   <div id="searchContainer" style="position:relative;margin-bottom:var(--sp-4)">
@@ -587,35 +860,6 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
   <!-- ═══════════ AI Analysis Panel (Kinetic Observatory) ═══════════ -->
   <div id="aiAnalysisPanel" class="glass" style="display:none;margin-bottom:var(--sp-4);overflow:hidden;border-radius:var(--radius-lg)">
     <div id="aiAnalysisContent"></div>
-  </div>
-
-  <!-- ═══════════ Portfolio cards ═══════════ -->
-  <div class="cards-row cards-5" id="portfolioCards">
-    <div class="glass card">
-      <div class="card-label">Balance</div>
-      <div class="card-value" id="pBalance">$--</div>
-      <div class="card-sub" id="pCapital">Starting: $--</div>
-    </div>
-    <div class="glass card">
-      <div class="card-label">Total P&amp;L</div>
-      <div class="card-value" id="pPnl">$--</div>
-      <div class="card-sub" id="pRoi">ROI: --%</div>
-    </div>
-    <div class="glass card">
-      <div class="card-label">Win Rate</div>
-      <div class="card-value" id="pWinRate">--%</div>
-      <div class="card-sub" id="pTrades">0 trades</div>
-    </div>
-    <div class="glass card">
-      <div class="card-label">Max Drawdown</div>
-      <div class="card-value negative" id="pDrawdown">--%</div>
-      <div class="card-sub" id="pPositions">0 open</div>
-    </div>
-    <div class="glass card">
-      <div class="card-label">KLSE Bursa Malaysia</div>
-      <div class="card-value" id="exKLSE_pnl" style="font-size:16px">$0.00</div>
-      <div class="card-sub"><span id="exKLSE_trades">0</span> trades | WR <span id="exKLSE_wr">--%</span> | <span id="exKLSE_count">0</span> stocks</div>
-    </div>
   </div>
 
   <!-- ═══════════ Sentiment cards ═══════════ -->
@@ -702,6 +946,12 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
     <button class="qf-btn" data-filter="TRADEABLE">Tradeable</button>
   </div>
 
+  <!-- ═══════════ Holdings filter toggle ═══════════ -->
+  <div id="holdingsFilterBar" style="display:none;margin-bottom:var(--sp-3);padding:6px 12px;background:var(--accent-muted);border:1px solid rgba(59,130,246,0.2);border-radius:var(--radius-sm);font-size:11px;color:var(--accent);align-items:center;justify-content:space-between">
+    <span id="holdingsFilterText">Showing your portfolio stocks only</span>
+    <a href="javascript:void(0)" onclick="toggleShowAll()" id="holdingsFilterToggle" style="font-weight:600;font-size:11px">View all 144 KLSE stocks &rarr;</a>
+  </div>
+
   <!-- ═══════════ Sector tables container ═══════════ -->
   <div id="sectorTablesContainer"></div>
 
@@ -763,6 +1013,470 @@ let expandedRow = null;
 let scannerData = [];
 let fundamentalsData = {};
 let collapsedSectors = {};
+
+// ═══════════ Auth & User State ═══════════
+const SUPABASE_URL = '{{ supabase_url }}';
+const SUPABASE_ANON_KEY = '{{ supabase_anon_key }}';
+let sbClient = null;
+let currentUser = null;
+let userHoldings = [];
+let showAllStocks = false;
+let authMode = 'login'; // 'login' or 'signup'
+let pendingOtpEmail = '';
+
+if (SUPABASE_URL && SUPABASE_ANON_KEY && typeof supabase !== 'undefined') {
+  sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  sbClient.auth.getSession().then(({data}) => {
+    if (data.session) onAuthSuccess(data.session.user);
+    else showLanding();
+  });
+  sbClient.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_IN' && session) onAuthSuccess(session.user);
+    else if (event === 'SIGNED_OUT') onSignOut();
+  });
+} else {
+  showLanding();
+}
+
+async function getToken() {
+  if (!sbClient) return '';
+  const {data} = await sbClient.auth.getSession();
+  return data?.session?.access_token || '';
+}
+
+function showAuthModal() {
+  $('#authOverlay').style.display = 'flex';
+  $('#authStep1').style.display = '';
+  $('#authStep2').style.display = 'none';
+  $('#authError').textContent = '';
+  setTimeout(() => $('#authEmail').focus(), 100);
+}
+function hideAuthModal() {
+  $('#authOverlay').style.display = 'none';
+  $('#authEmail').value = '';
+  $('#authPassword').value = '';
+  $('#authError').textContent = '';
+}
+function toggleAuthMode() {
+  authMode = authMode === 'login' ? 'signup' : 'login';
+  $('#authSubmitBtn').textContent = authMode === 'login' ? 'Sign In' : 'Sign Up';
+  $('#authToggleText').textContent = authMode === 'login' ? "Don't have an account?" : 'Already have an account?';
+  $('#authToggleLink').textContent = authMode === 'login' ? 'Sign Up' : 'Sign In';
+  $('#authError').textContent = '';
+}
+async function authSubmit() {
+  const email = $('#authEmail').value.trim();
+  const pw = $('#authPassword').value;
+  if (!email || !pw) return;
+  $('#authSubmitBtn').disabled = true;
+  $('#authError').textContent = '';
+  try {
+    let res;
+    if (authMode === 'signup') {
+      res = await sbClient.auth.signUp({email, password: pw});
+      if (res.error) throw res.error;
+      // Send OTP for email verification
+      pendingOtpEmail = email;
+      await sbClient.auth.signInWithOtp({email});
+      showOtpStep(email);
+    } else {
+      res = await sbClient.auth.signInWithPassword({email, password: pw});
+      if (res.error) throw res.error;
+      // Send OTP for 2FA
+      pendingOtpEmail = email;
+      await sbClient.auth.signInWithOtp({email});
+      showOtpStep(email);
+    }
+  } catch (err) {
+    $('#authError').textContent = err.message || 'Authentication failed';
+  } finally {
+    $('#authSubmitBtn').disabled = false;
+  }
+}
+function showOtpStep(email) {
+  $('#authStep1').style.display = 'none';
+  $('#authStep2').style.display = '';
+  $('#otpSubtext').textContent = 'We sent a 6-digit code to ' + email;
+  $('#otpError').textContent = '';
+  clearOtpBoxes();
+  setTimeout(() => $('#otp1').focus(), 100);
+  startResendTimer();
+}
+function clearOtpBoxes() {
+  for (let i = 1; i <= 6; i++) $('#otp' + i).value = '';
+}
+// OTP box auto-advance
+for (let i = 1; i <= 6; i++) {
+  const el = document.getElementById('otp' + i);
+  if (!el) continue;
+  el.addEventListener('input', function() {
+    if (this.value.length === 1 && i < 6) document.getElementById('otp' + (i + 1)).focus();
+    if (i === 6 && this.value.length === 1) verifyOtp();
+  });
+  el.addEventListener('keydown', function(e) {
+    if (e.key === 'Backspace' && !this.value && i > 1) document.getElementById('otp' + (i - 1)).focus();
+  });
+}
+async function verifyOtp() {
+  const code = [1,2,3,4,5,6].map(i => $('#otp'+i).value).join('');
+  if (code.length !== 6) { $('#otpError').textContent = 'Enter all 6 digits'; return; }
+  $('#otpVerifyBtn').disabled = true;
+  $('#otpError').textContent = '';
+  try {
+    const res = await sbClient.auth.verifyOtp({email: pendingOtpEmail, token: code, type: 'email'});
+    if (res.error) throw res.error;
+    hideAuthModal();
+    // onAuthSuccess will be triggered by onAuthStateChange
+  } catch (err) {
+    $('#otpError').textContent = err.message || 'Invalid code';
+    clearOtpBoxes();
+    $('#otp1').focus();
+  } finally {
+    $('#otpVerifyBtn').disabled = false;
+  }
+}
+let resendTimerInterval = null;
+function startResendTimer() {
+  let sec = 60;
+  $('#resendLink').style.display = 'none';
+  $('#resendTimer').style.display = '';
+  $('#resendTimer').textContent = 'Resend in ' + sec + 's';
+  clearInterval(resendTimerInterval);
+  resendTimerInterval = setInterval(() => {
+    sec--;
+    if (sec <= 0) {
+      clearInterval(resendTimerInterval);
+      $('#resendLink').style.display = '';
+      $('#resendTimer').style.display = 'none';
+    } else {
+      $('#resendTimer').textContent = 'Resend in ' + sec + 's';
+    }
+  }, 1000);
+}
+async function resendOtp() {
+  if (!pendingOtpEmail) return;
+  try {
+    await sbClient.auth.signInWithOtp({email: pendingOtpEmail});
+    startResendTimer();
+  } catch(e) { console.error('Resend failed:', e); }
+}
+function onAuthSuccess(user) {
+  currentUser = user;
+  hideAuthModal();
+  $('#loginBtn').style.display = 'none';
+  $('#userPill').style.display = 'flex';
+  $('#userEmail').textContent = user.email || 'User';
+  // Switch to dashboard
+  $('#landingPage').style.display = 'none';
+  $('#dashboardContainer').style.display = '';
+  loadUserData();
+}
+function onSignOut() {
+  currentUser = null;
+  userHoldings = [];
+  showAllStocks = false;
+  showLanding();
+}
+function showLanding() {
+  $('#landingPage').style.display = '';
+  $('#dashboardContainer').style.display = 'none';
+  $('#loginBtn').style.display = '';
+  $('#userPill').style.display = 'none';
+}
+async function authSignOut() {
+  $('#userMenu').style.display = 'none';
+  if (sbClient) await sbClient.auth.signOut();
+  onSignOut();
+}
+function toggleUserMenu() {
+  const m = $('#userMenu');
+  m.style.display = m.style.display === 'none' ? '' : 'none';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#userPill') && !e.target.closest('#userMenu')) $('#userMenu').style.display = 'none';
+});
+
+// ═══════════ User Data Loading ═══════════
+async function loadUserData() {
+  await loadUserUploads();
+  await loadUserHoldings();
+}
+async function loadUserHoldings() {
+  const token = await getToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/user/holdings', {headers: {'Authorization': 'Bearer ' + token}});
+    const data = await res.json();
+    userHoldings = data.holdings || [];
+    if (userHoldings.length > 0) {
+      showExtractionResults(userHoldings);
+      renderSectorTables();
+      updateHoldingsFilterBar();
+    }
+  } catch(e) { console.error('Load holdings:', e); }
+}
+
+// ═══════════ Upload ═══════════
+async function handleUpload(files) {
+  if (!currentUser || !sbClient) return;
+  for (const file of files) {
+    if (file.size > 5 * 1024 * 1024) { alert('File too large: ' + file.name + ' (max 5MB)'); continue; }
+    const ext = file.name.split('.').pop();
+    const storagePath = currentUser.id + '/' + Date.now() + '.' + ext;
+    try {
+      const {error: upErr} = await sbClient.storage.from('portfolio-screenshots').upload(storagePath, file, {contentType: file.type});
+      if (upErr) throw upErr;
+      const token = await getToken();
+      const recRes = await fetch('/api/user/uploads', {
+        method: 'POST',
+        headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: file.name, storage_path: storagePath}),
+      });
+      const rec = await recRes.json();
+      loadUserUploads();
+      // Auto-trigger AI analysis
+      analyzeScreenshot(rec.upload?.id || '', storagePath);
+    } catch(e) { console.error('Upload failed:', e); alert('Upload failed: ' + (e.message || e)); }
+  }
+}
+function handleDrop(event) {
+  event.preventDefault();
+  event.target.closest('.upload-area')?.classList.remove('dragover');
+  handleUpload(event.dataTransfer.files);
+}
+async function loadUserUploads() {
+  const token = await getToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/user/uploads', {headers: {'Authorization': 'Bearer ' + token}});
+    const data = await res.json();
+    renderUploadGallery(data.uploads || []);
+  } catch(e) { console.error('Load uploads:', e); }
+}
+function renderUploadGallery(uploads) {
+  const g = $('#uploadGallery');
+  if (!uploads.length) { g.innerHTML = ''; return; }
+  g.innerHTML = uploads.map(u => {
+    const ts = new Date(u.uploaded_at).toLocaleDateString();
+    const extracted = u.ai_extracted ? '<span style="color:var(--green);font-size:9px">&#10003; extracted</span>' : '';
+    return `<div class="upload-thumb">
+      <img src="${u.url}" alt="${u.filename}" loading="lazy" onerror="this.style.display='none'">
+      <button class="del-btn" onclick="deleteUpload('${u.id}',event)" title="Delete">&times;</button>
+      <div style="position:absolute;bottom:0;left:0;right:0;padding:3px 6px;background:rgba(0,0,0,0.75);font-size:9px;color:var(--text-tertiary);display:flex;justify-content:space-between">
+        <span>${u.filename.slice(0,20)}</span>${extracted}
+      </div>
+    </div>`;
+  }).join('');
+}
+async function deleteUpload(id, event) {
+  event.stopPropagation();
+  if (!confirm('Delete this screenshot?')) return;
+  const token = await getToken();
+  try {
+    await fetch('/api/user/uploads/' + id, {method: 'DELETE', headers: {'Authorization': 'Bearer ' + token}});
+    loadUserUploads();
+  } catch(e) { console.error('Delete failed:', e); }
+}
+
+// ═══════════ AI Screenshot Analysis ═══════════
+async function analyzeScreenshot(uploadId, storagePath) {
+  const token = await getToken();
+  if (!token) return;
+  // Show progress
+  $('#extractionSection').style.display = '';
+  $('#extractionProgress').style.display = 'flex';
+  $('#extractionBar').style.width = '20%';
+  try {
+    setTimeout(() => $('#extractionBar').style.width = '60%', 500);
+    const res = await fetch('/api/user/analyze-screenshot', {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+      body: JSON.stringify({upload_id: uploadId, storage_path: storagePath}),
+    });
+    $('#extractionBar').style.width = '90%';
+    const data = await res.json();
+    if (data.error) { alert('Analysis: ' + data.error); return; }
+    setTimeout(() => {
+      $('#extractionBar').style.width = '100%';
+      setTimeout(() => $('#extractionProgress').style.display = 'none', 300);
+    }, 200);
+    userHoldings = data.matched_holdings || [];
+    showExtractionResults(userHoldings);
+    renderSectorTables();
+    updateHoldingsFilterBar();
+    loadUserUploads();
+  } catch(e) {
+    console.error('Analysis failed:', e);
+    alert('Screenshot analysis failed');
+  }
+}
+function showExtractionResults(holdings) {
+  if (!holdings.length) return;
+  $('#extractionSection').style.display = '';
+  $('#extractionBadge').textContent = holdings.length + ' STOCKS';
+  const body = $('#holdingsBody');
+  body.innerHTML = holdings.map(h => {
+    const cfg = Object.entries(window._stocksConfig || {}).find(([k]) => k === h.stock_key);
+    const name = cfg ? cfg[1].name : h.stock_key;
+    return `<tr>
+      <td><strong>${h.stock_key}</strong><br><span style="color:var(--text-tertiary);font-size:10px">${name}</span></td>
+      <td style="color:var(--text-tertiary)">${h.ticker}</td>
+      <td style="text-align:right">${Number(h.shares).toLocaleString()}</td>
+      <td style="text-align:right">RM${Number(h.avg_price).toFixed(2)}</td>
+      <td style="text-align:right">RM${Number(h.market_value).toLocaleString()}</td>
+      <td style="text-align:center"><button style="background:var(--accent-muted);color:var(--accent);border:none;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit" onclick="triggerStockAi('${h.stock_key}')">Analyse</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ═══════════ Portfolio Risk Analysis ═══════════
+async function analyzePortfolioRisk() {
+  const token = await getToken();
+  if (!token || !userHoldings.length) return;
+  $('#analyzePortfolioBtn').disabled = true;
+  $('#analyzePortfolioBtn').textContent = 'Analysing...';
+  try {
+    const res = await fetch('/api/user/portfolio-risk', {headers: {'Authorization': 'Bearer ' + token}});
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    renderPortfolioRisk(data);
+    // Auto-trigger per-stock AI
+    triggerAllStockAi();
+  } catch(e) {
+    console.error('Risk analysis failed:', e);
+  } finally {
+    $('#analyzePortfolioBtn').disabled = false;
+    $('#analyzePortfolioBtn').textContent = 'Analyse My Portfolio \u2192';
+  }
+}
+function renderPortfolioRisk(data) {
+  $('#riskSection').style.display = '';
+  const lvl = data.risk_level || '--';
+  const lvlColor = lvl === 'LOW' ? 'var(--green)' : lvl === 'MEDIUM' ? 'var(--yellow)' : 'var(--red)';
+  const lvlBg = lvl === 'LOW' ? 'var(--green-muted)' : lvl === 'MEDIUM' ? 'var(--yellow-muted)' : 'var(--red-muted)';
+  $('#riskBadge').textContent = lvl;
+  $('#riskBadge').style.background = lvlBg;
+  $('#riskBadge').style.color = lvlColor;
+  $('#riskCards').innerHTML = `
+    <div class="glass risk-card"><div class="risk-label">Risk Score</div><div class="risk-val" style="color:${lvlColor}">${data.risk_score}/100</div><div class="risk-sub">${lvl}</div></div>
+    <div class="glass risk-card"><div class="risk-label">Concentration</div><div class="risk-val">${data.max_concentration}%</div><div class="risk-sub">Largest position</div></div>
+    <div class="glass risk-card"><div class="risk-label">Diversification</div><div class="risk-val">${data.num_sectors} sectors</div><div class="risk-sub">${data.num_holdings} holdings</div></div>
+    <div class="glass risk-card"><div class="risk-label">Total Value</div><div class="risk-val">RM${Number(data.total_value).toLocaleString()}</div><div class="risk-sub">Portfolio value</div></div>
+  `;
+  // AI narrative
+  const narr = data.ai_narrative;
+  if (narr && narr.text) {
+    $('#riskNarrative').style.display = '';
+    const src = narr.source === 'claude_sonnet' ? 'Claude Sonnet' : narr.source === 'openai_gpt4o' ? 'GPT-4o' : 'Rule-Based';
+    $('#riskNarrative').innerHTML = '<div class="risk-narrative">' +
+      narr.text.replace(/\n/g, '<br>').replace(/(SUMMARY|STRENGTHS|RISKS|SUGGESTIONS):/g, '<strong>$1:</strong>') +
+      '<div style="text-align:right;margin-top:var(--sp-2);font-size:9px;color:var(--text-tertiary)">Source: ' + src + '</div></div>';
+  }
+  // Sector breakdown
+  if (data.sector_breakdown) {
+    const sects = Object.entries(data.sector_breakdown);
+    if (sects.length > 0) {
+      let sectHtml = '<div style="padding:0 var(--sp-4) var(--sp-4);display:flex;flex-wrap:wrap;gap:var(--sp-2)">';
+      sects.forEach(([s, pct]) => {
+        sectHtml += `<span style="padding:2px 8px;border-radius:4px;font-size:10px;background:var(--glass-bg);border:1px solid var(--glass-border)">${s} <strong>${pct}%</strong></span>`;
+      });
+      sectHtml += '</div>';
+      $('#riskNarrative').innerHTML += sectHtml;
+    }
+  }
+}
+
+// ═══════════ Per-Stock AI Analysis ═══════════
+let stockAiResults = {};
+async function triggerStockAi(stockKey) {
+  try {
+    const res = await fetch('/api/ai-analysis/' + stockKey);
+    const data = await res.json();
+    stockAiResults[stockKey] = data;
+    renderStockAiCards();
+  } catch(e) { console.error('Stock AI failed:', e); }
+}
+async function triggerAllStockAi() {
+  if (!userHoldings.length) return;
+  $('#stockAiSection').style.display = '';
+  $('#stockAiBadge').textContent = 'LOADING...';
+  for (const h of userHoldings) {
+    await triggerStockAi(h.stock_key);
+    await new Promise(r => setTimeout(r, 500)); // Rate limit
+  }
+  $('#stockAiBadge').textContent = Object.keys(stockAiResults).length + ' ANALYSED';
+}
+function renderStockAiCards() {
+  const grid = $('#stockAiGrid');
+  const keys = Object.keys(stockAiResults);
+  if (!keys.length) return;
+  $('#stockAiSection').style.display = '';
+  grid.innerHTML = keys.map(k => {
+    const d = stockAiResults[k];
+    const rec = (d.recommendation || 'HOLD').toUpperCase();
+    const recCls = rec === 'BUY' ? 'buy' : rec === 'SELL' ? 'sell' : 'hold';
+    const name = d.name || k;
+    const confPct = d.confidence != null ? (d.confidence * 100).toFixed(0) + '%' : '--';
+    const risk = d.risk_level || '--';
+    const pt = d.price_targets;
+    const target = pt && pt.predicted_price ? 'RM' + pt.predicted_price.toFixed(2) : '--';
+    const src = d.ai_source === 'claude_sonnet' ? 'Claude' : d.ai_source === 'openai_gpt4o' ? 'GPT-4o' : 'Rule-Based';
+    const narr = d.narrative ? d.narrative.slice(0, 120) + (d.narrative.length > 120 ? '...' : '') : '';
+    return `<div class="glass stock-ai-card">
+      <div class="sac-header"><span class="sac-name">${k}</span><span class="sac-rec ${recCls}">${rec}</span></div>
+      <div class="sac-detail">
+        <div style="margin-bottom:4px;color:var(--text-secondary)">${name}</div>
+        <div>Target: <strong>${target}</strong> | Risk: <strong>${risk}</strong> | Confidence: <strong>${confPct}</strong></div>
+        ${narr ? '<div style="margin-top:4px;font-style:italic">' + narr + '</div>' : ''}
+        <div style="text-align:right;margin-top:4px;font-size:9px;color:var(--text-tertiary)">${src}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════ Landing Preview ═══════════
+function updateLandingPreview() {
+  const body = $('#landingTableBody');
+  if (!body || $('#landingPage').style.display === 'none') return;
+  const top10 = scannerData.filter(s => s.status === 'OK').slice(0, 10);
+  if (!top10.length) return;
+  body.innerHTML = top10.map(s => {
+    const chg = (s.momentum || 0) * 100;
+    const cls = chg > 0 ? 'positive' : chg < 0 ? 'negative' : '';
+    const sig = s.direction || 'HOLD';
+    const sigCls = sig === 'BUY' ? 'color:var(--green)' : sig === 'SELL' ? 'color:var(--red)' : 'color:var(--text-tertiary)';
+    return `<tr>
+      <td style="padding:6px 10px"><strong>${s.stock_key}</strong><br><span style="color:var(--text-tertiary);font-size:9px">${s.name || ''}</span></td>
+      <td style="padding:6px 10px;text-align:right">RM${(s.price || 0).toFixed(2)}</td>
+      <td style="padding:6px 10px;text-align:right" class="${cls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</td>
+      <td style="padding:6px 10px;text-align:center;font-weight:700;font-size:11px;${sigCls}">${sig}</td>
+      <td style="padding:6px 10px;text-align:center">${(s.score || 0).toFixed(0)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ═══════════ Holdings filter toggle ═══════════
+function toggleShowAll() {
+  showAllStocks = !showAllStocks;
+  updateHoldingsFilterBar();
+  renderSectorTables();
+}
+function updateHoldingsFilterBar() {
+  const bar = $('#holdingsFilterBar');
+  if (!currentUser || !userHoldings.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  if (showAllStocks) {
+    $('#holdingsFilterText').textContent = 'Showing all 144 KLSE stocks';
+    $('#holdingsFilterToggle').textContent = 'Show my portfolio only \u2190';
+  } else {
+    $('#holdingsFilterText').textContent = 'Showing your ' + userHoldings.length + ' portfolio stocks only';
+    $('#holdingsFilterToggle').innerHTML = 'View all 144 KLSE stocks &rarr;';
+  }
+}
+
+// Store config for holdings display
+window._stocksConfig = {};
+fetch('/api/config').then(r => r.json()).then(d => { window._stocksConfig = d.stocks || {}; }).catch(() => {});
 
 // Sector display order
 const SECTOR_ORDER = ['Finance','Technology','Healthcare','Energy','Consumer','Industrial','Construction','Plantation','REIT','Utilities','Telecom','Transport','Conglomerate','Media','Food & Beverage','Education'];
@@ -1047,7 +1761,12 @@ function patternCell(s) {
 // ──── Render sector-grouped tables ────
 function renderSectorTables() {
   const container = $('#sectorTablesContainer');
-  const filtered = scannerData.filter(filterBySignal);
+  let filtered = scannerData.filter(filterBySignal);
+  // If logged in with holdings, show only user's stocks
+  if (currentUser && userHoldings.length > 0 && !showAllStocks) {
+    const holdingKeys = userHoldings.map(h => h.stock_key);
+    filtered = filtered.filter(s => holdingKeys.includes(s.stock_key));
+  }
 
   if (filtered.length === 0) {
     const loadingCls = scannerData.length === 0 ? ' glass-loading' : '';
@@ -1404,36 +2123,7 @@ function updateHeader(data) {
   }
 }
 
-// ──── Update portfolio ────
-function updatePortfolio(risk, perf) {
-  if (risk) {
-    $('#pBalance').textContent = fmtMoney(risk.balance);
-    $('#pBalance').className = 'card-value ' + pnlClass(risk.total_pnl);
-    $('#pDrawdown').textContent = fmtPct(risk.max_drawdown);
-    $('#pPositions').textContent = risk.open_positions + ' open';
-    $('#pCapital').textContent = 'Starting: $100.00';
-  }
-  if (perf) {
-    $('#pPnl').textContent = fmtMoney(perf.total_pnl);
-    $('#pPnl').className = 'card-value ' + pnlClass(perf.total_pnl);
-    $('#pRoi').textContent = 'ROI: ' + fmtPct(perf.roi);
-    $('#pWinRate').textContent = fmtPct(perf.win_rate);
-    $('#pTrades').textContent = perf.total_trades + ' trades';
-  }
-}
-
-// ──── Update exchange card ────
-function updateExchanges(data) {
-  if (!data) return;
-  const d = data['KLSE'] || {};
-  $('#exKLSE_trades').textContent = d.trades || 0;
-  $('#exKLSE_wr').textContent = d.win_rate != null ? d.win_rate.toFixed(1) + '%' : '--%';
-  const pnlEl = $('#exKLSE_pnl');
-  pnlEl.textContent = fmtMoney(d.pnl || 0);
-  pnlEl.className = 'card-value ' + pnlClass(d.pnl || 0);
-  const stockCount = scannerData.filter(s => s.exchange === 'KLSE').length;
-  $('#exKLSE_count').textContent = stockCount;
-}
+// (updatePortfolio and updateExchanges removed — replaced by user portfolio features)
 
 // ──── Sentiment cards ────
 function updateSentimentCards(sentData) {
@@ -2147,20 +2837,17 @@ updateAnalyzeBtn();
 // ──── Refresh all ────
 async function refresh() {
   try {
-    const [scanRes, riskRes, perfRes, exRes, tradeRes] = await Promise.all([
+    const [scanRes, tradeRes] = await Promise.all([
       fetch('/api/scanner').then(r => r.json()),
-      fetch('/api/risk').then(r => r.json()),
-      fetch('/api/portfolio').then(r => r.json()),
-      fetch('/api/exchanges').then(r => r.json()),
       fetch('/api/trades').then(r => r.json()),
     ]);
     updateHeader(scanRes);
     scannerData = scanRes.stocks || [];
     buildSearchList();
     renderSectorTables();
-    updatePortfolio(riskRes, perfRes);
-    updateExchanges(exRes);
     renderTrades(tradeRes);
+    // Update landing preview if visible
+    updateLandingPreview();
 
     Promise.all([
       fetch('/api/sentiment').then(r => r.json()).catch(() => null),

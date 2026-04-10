@@ -9,13 +9,22 @@ import sys
 import time
 import uuid
 import json
+import base64
 import threading
 import logging
 import numpy as np
+import jwt as pyjwt
+from functools import wraps
 from flask import Flask, jsonify, render_template
 from flask.json.provider import DefaultJSONProvider
 
 from flask import request
+
+try:
+    from supabase import create_client, Client as SupabaseClient
+except ImportError:
+    SupabaseClient = None
+    create_client = None
 
 from config import (
     STARTING_CAPITAL,
@@ -402,10 +411,50 @@ scanner_state = ScannerState()
 risk_manager = None
 portfolio = None
 
+# ---- Supabase Auth ----
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+supabase_client = None
+if SUPABASE_URL and SUPABASE_ANON_KEY and create_client:
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        logger.info("Supabase client initialised")
+    except Exception as e:
+        logger.warning(f"Supabase init failed: {e}")
+
+
+def require_auth(f):
+    """Decorator: validates Supabase JWT, injects user_id into kwargs."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Missing or invalid Authorization header"}), 401
+        token = auth_header[7:]
+        try:
+            payload = pyjwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+            kwargs["user_id"] = payload["sub"]
+        except pyjwt.ExpiredSignatureError:
+            return jsonify({"error": "Token expired"}), 401
+        except pyjwt.InvalidTokenError as e:
+            return jsonify({"error": f"Invalid token: {e}"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        supabase_url=SUPABASE_URL,
+        supabase_anon_key=SUPABASE_ANON_KEY,
+    )
 
 
 @app.route("/api/health")
@@ -416,21 +465,6 @@ def health():
 @app.route("/api/scanner")
 def api_scanner():
     return jsonify(scanner_state.get_results())
-
-
-@app.route("/api/portfolio")
-def api_portfolio():
-    return jsonify(portfolio.get_performance())
-
-
-@app.route("/api/risk")
-def api_risk():
-    return jsonify(risk_manager.get_stats())
-
-
-@app.route("/api/exchanges")
-def api_exchanges():
-    return jsonify(portfolio.get_exchange_breakdown())
 
 
 @app.route("/api/trades")
@@ -454,6 +488,459 @@ def api_config():
         },
         "starting_capital": STARTING_CAPITAL,
     })
+
+
+# ═══════════ Supabase User Endpoints ═══════════
+
+@app.route("/api/user/holdings", methods=["GET"])
+@require_auth
+def api_get_holdings(user_id=None):
+    """Get current user's stock holdings."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    result = supabase_client.table("user_holdings") \
+        .select("stock_key, ticker, shares, avg_price, market_value, extracted_at") \
+        .eq("user_id", user_id) \
+        .execute()
+    return jsonify({"holdings": result.data or []})
+
+
+@app.route("/api/user/holdings", methods=["PUT"])
+@require_auth
+def api_set_holdings(user_id=None):
+    """Replace user's holdings with a new list."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    data = request.get_json()
+    holdings = data.get("holdings", [])
+    # Delete existing
+    supabase_client.table("user_holdings") \
+        .delete().eq("user_id", user_id).execute()
+    # Insert new
+    if holdings:
+        rows = []
+        for h in holdings:
+            sk = h.get("stock_key", "")
+            if sk in STOCKS:
+                rows.append({
+                    "user_id": user_id,
+                    "stock_key": sk,
+                    "ticker": h.get("ticker", ""),
+                    "shares": h.get("shares", 0),
+                    "avg_price": h.get("avg_price", 0),
+                    "market_value": h.get("market_value", 0),
+                })
+        if rows:
+            supabase_client.table("user_holdings").insert(rows).execute()
+    result = supabase_client.table("user_holdings") \
+        .select("stock_key, ticker, shares, avg_price, market_value") \
+        .eq("user_id", user_id).execute()
+    return jsonify({"holdings": result.data or []})
+
+
+@app.route("/api/user/uploads", methods=["GET"])
+@require_auth
+def api_get_uploads(user_id=None):
+    """Get current user's upload records with signed URLs."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    result = supabase_client.table("user_uploads") \
+        .select("id, filename, storage_path, ai_extracted, extraction_result, uploaded_at") \
+        .eq("user_id", user_id) \
+        .order("uploaded_at", desc=True) \
+        .execute()
+    uploads = []
+    for r in (result.data or []):
+        url = ""
+        try:
+            signed = supabase_client.storage \
+                .from_("portfolio-screenshots") \
+                .create_signed_url(r["storage_path"], 3600)
+            if isinstance(signed, dict):
+                url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url", "")
+            elif hasattr(signed, "signed_url"):
+                url = signed.signed_url
+            else:
+                url = str(signed) if signed else ""
+        except Exception:
+            pass
+        uploads.append({**r, "url": url})
+    return jsonify({"uploads": uploads})
+
+
+@app.route("/api/user/uploads", methods=["POST"])
+@require_auth
+def api_record_upload(user_id=None):
+    """Record a new upload after client-side Supabase Storage upload."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    data = request.get_json()
+    filename = data.get("filename", "")
+    storage_path = data.get("storage_path", "")
+    if not filename or not storage_path:
+        return jsonify({"error": "filename and storage_path required"}), 400
+    if not storage_path.startswith(f"{user_id}/"):
+        return jsonify({"error": "Invalid storage path"}), 403
+    result = supabase_client.table("user_uploads").insert({
+        "user_id": user_id,
+        "filename": filename,
+        "storage_path": storage_path,
+    }).execute()
+    return jsonify({"upload": result.data[0] if result.data else {}})
+
+
+@app.route("/api/user/uploads/<upload_id>", methods=["DELETE"])
+@require_auth
+def api_delete_upload(upload_id, user_id=None):
+    """Delete an upload record and storage file."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    result = supabase_client.table("user_uploads") \
+        .select("storage_path").eq("id", upload_id).eq("user_id", user_id).execute()
+    if not result.data:
+        return jsonify({"error": "Upload not found"}), 404
+    path = result.data[0]["storage_path"]
+    try:
+        supabase_client.storage.from_("portfolio-screenshots").remove([path])
+    except Exception as e:
+        logger.warning(f"Storage delete failed for {path}: {e}")
+    supabase_client.table("user_uploads") \
+        .delete().eq("id", upload_id).eq("user_id", user_id).execute()
+    return jsonify({"deleted": True})
+
+
+@app.route("/api/user/analyze-screenshot", methods=["POST"])
+@require_auth
+def api_analyze_screenshot(user_id=None):
+    """AI-extract stock holdings from an uploaded portfolio screenshot using GPT-4o Vision."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    data = request.get_json()
+    upload_id = data.get("upload_id", "")
+    storage_path = data.get("storage_path", "")
+    if not storage_path:
+        return jsonify({"error": "storage_path required"}), 400
+    if not storage_path.startswith(f"{user_id}/"):
+        return jsonify({"error": "Invalid storage path"}), 403
+
+    # Generate signed URL for the image
+    try:
+        signed = supabase_client.storage \
+            .from_("portfolio-screenshots") \
+            .create_signed_url(storage_path, 600)
+        # Handle both dict and object return formats across supabase-py versions
+        if isinstance(signed, dict):
+            image_url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url", "")
+        elif hasattr(signed, "signed_url"):
+            image_url = signed.signed_url
+        else:
+            image_url = str(signed) if signed else ""
+    except Exception as e:
+        return jsonify({"error": f"Could not access image: {e}"}), 500
+
+    if not image_url:
+        return jsonify({"error": "Could not generate signed URL"}), 500
+
+    # Build stock reference for matching
+    stock_ref = []
+    for k, v in STOCKS.items():
+        if v["enabled"]:
+            code = v["ticker"].replace(".KL", "")
+            stock_ref.append(f"{code} = {k} ({v['name']})")
+    stock_ref_text = "\n".join(stock_ref[:60])  # Top 60 for context window
+
+    prompt = f"""You are analyzing a Malaysian stock brokerage portfolio screenshot from a KLSE/Bursa Malaysia trading platform.
+
+Extract ALL stock holdings visible in the image. For each holding, extract:
+- stock_name: The company name
+- ticker: The Bursa Malaysia stock code (numeric, e.g. "1155" for Maybank)
+- shares: Number of shares held
+- avg_price: Average purchase price in MYR
+- market_value: Current market value in MYR
+- pnl: Unrealized profit/loss in MYR (0 if not visible)
+
+Here are some KLSE stock codes for reference:
+{stock_ref_text}
+
+Return ONLY a valid JSON array. No commentary, no markdown fences.
+Output schema: [{{"stock_name":"...","ticker":"...","shares":0,"avg_price":0.00,"market_value":0.00,"pnl":0.00}}]
+If you cannot extract any holdings, return an empty array: []"""
+
+    # Call OpenAI GPT-4o Vision
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if not openai_key:
+        return jsonify({"error": "OpenAI API key not configured for screenshot analysis"}), 503
+
+    try:
+        import openai
+        client = openai.OpenAI(api_key=openai_key)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            max_tokens=2000,
+            temperature=0.0,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url, "detail": "high"}},
+                    ],
+                }
+            ],
+        )
+        raw_text = response.choices[0].message.content.strip()
+        # Clean markdown fences if present
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+            if raw_text.endswith("```"):
+                raw_text = raw_text[:-3].strip()
+        extracted = json.loads(raw_text)
+    except json.JSONDecodeError:
+        logger.error(f"GPT-4o returned non-JSON for screenshot: {raw_text[:200]}")
+        return jsonify({"error": "AI could not parse the screenshot", "raw": raw_text[:500]}), 422
+    except Exception as e:
+        logger.error(f"Screenshot analysis failed: {e}")
+        return jsonify({"error": f"Analysis failed: {e}"}), 500
+
+    if not isinstance(extracted, list):
+        extracted = []
+
+    # Match extracted tickers to our STOCKS config
+    matched_holdings = []
+    ticker_to_key = {}
+    for k, v in STOCKS.items():
+        if v["enabled"]:
+            code = v["ticker"].replace(".KL", "")
+            ticker_to_key[code] = k
+            ticker_to_key[k.lower()] = k
+            ticker_to_key[v["name"].lower()] = k
+
+    for item in extracted:
+        ticker = str(item.get("ticker", "")).strip()
+        name = str(item.get("stock_name", "")).strip().lower()
+        stock_key = ticker_to_key.get(ticker) or ticker_to_key.get(name)
+        if not stock_key:
+            # Try fuzzy: check if ticker is substring of any key
+            for code, sk in ticker_to_key.items():
+                if ticker and ticker in code:
+                    stock_key = sk
+                    break
+        if stock_key and stock_key in STOCKS:
+            matched_holdings.append({
+                "stock_key": stock_key,
+                "ticker": STOCKS[stock_key]["ticker"],
+                "shares": float(item.get("shares", 0) or 0),
+                "avg_price": float(item.get("avg_price", 0) or 0),
+                "market_value": float(item.get("market_value", 0) or 0),
+            })
+
+    # Save to user_holdings (replace existing)
+    supabase_client.table("user_holdings") \
+        .delete().eq("user_id", user_id).execute()
+    if matched_holdings:
+        rows = [{"user_id": user_id, **h} for h in matched_holdings]
+        supabase_client.table("user_holdings").insert(rows).execute()
+
+    # Mark upload as extracted
+    if upload_id:
+        supabase_client.table("user_uploads").update({
+            "ai_extracted": True,
+            "extraction_result": extracted,
+        }).eq("id", upload_id).eq("user_id", user_id).execute()
+
+    return jsonify({
+        "extracted_raw": extracted,
+        "matched_holdings": matched_holdings,
+        "matched_count": len(matched_holdings),
+        "total_extracted": len(extracted),
+    })
+
+
+@app.route("/api/user/portfolio-risk", methods=["GET"])
+@require_auth
+def api_portfolio_risk(user_id=None):
+    """Calculate portfolio-level risk analysis with AI narrative."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+
+    # Fetch holdings
+    result = supabase_client.table("user_holdings") \
+        .select("stock_key, ticker, shares, avg_price, market_value") \
+        .eq("user_id", user_id).execute()
+    holdings = result.data or []
+    if not holdings:
+        return jsonify({"error": "No holdings found. Upload a portfolio screenshot first."}), 404
+
+    # Calculate metrics
+    total_value = sum(float(h.get("market_value", 0) or 0) for h in holdings)
+    if total_value <= 0:
+        total_value = 1  # avoid division by zero
+
+    # Weights and concentration
+    for h in holdings:
+        h["weight"] = round(float(h.get("market_value", 0) or 0) / total_value * 100, 2)
+    holdings_sorted = sorted(holdings, key=lambda x: x["weight"], reverse=True)
+    max_weight = holdings_sorted[0]["weight"] if holdings_sorted else 0
+    top5_weight = sum(h["weight"] for h in holdings_sorted[:5])
+
+    # Sector breakdown
+    sector_map = {}
+    for h in holdings:
+        sk = h["stock_key"]
+        sector = STOCKS.get(sk, {}).get("sector", "Unknown")
+        sector_map[sector] = sector_map.get(sector, 0) + h["weight"]
+    num_sectors = len(sector_map)
+
+    # Herfindahl index (concentration)
+    hhi = sum((w / 100) ** 2 for w in [h["weight"] for h in holdings])
+    hhi_pct = round(hhi * 100, 1)
+
+    # Risk score: 0 = low risk, 100 = high risk
+    risk_score = 0
+    if max_weight > 40:
+        risk_score += 30
+    elif max_weight > 25:
+        risk_score += 15
+    if num_sectors < 3:
+        risk_score += 25
+    elif num_sectors < 5:
+        risk_score += 10
+    if hhi > 0.25:
+        risk_score += 25
+    elif hhi > 0.15:
+        risk_score += 10
+    if len(holdings) < 5:
+        risk_score += 20
+    elif len(holdings) < 10:
+        risk_score += 5
+    risk_score = min(risk_score, 100)
+
+    risk_level = "LOW" if risk_score < 30 else "MEDIUM" if risk_score < 60 else "HIGH" if risk_score < 80 else "CRITICAL"
+
+    metrics = {
+        "total_value": round(total_value, 2),
+        "num_holdings": len(holdings),
+        "num_sectors": num_sectors,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "max_concentration": round(max_weight, 1),
+        "top5_weight": round(top5_weight, 1),
+        "hhi": hhi_pct,
+        "sector_breakdown": {k: round(v, 1) for k, v in sorted(sector_map.items(), key=lambda x: -x[1])},
+        "top_holdings": [
+            {"stock_key": h["stock_key"], "weight": h["weight"],
+             "name": STOCKS.get(h["stock_key"], {}).get("name", "")}
+            for h in holdings_sorted[:5]
+        ],
+    }
+
+    # AI narrative (reuse existing 3-tier chain)
+    holdings_text = "\n".join(
+        f"- {h['stock_key']} ({STOCKS.get(h['stock_key'], {}).get('name', '')}): "
+        f"{h['weight']:.1f}% weight, RM{float(h.get('market_value', 0)):,.0f}, "
+        f"Sector: {STOCKS.get(h['stock_key'], {}).get('sector', 'Unknown')}"
+        for h in holdings_sorted
+    )
+    risk_prompt = f"""Analyze this Malaysian stock portfolio and provide a risk assessment.
+
+Portfolio Summary:
+- Total Value: RM{total_value:,.2f}
+- Holdings: {len(holdings)} stocks across {num_sectors} sectors
+- Concentration (HHI): {hhi_pct}%
+- Largest Position: {max_weight:.1f}%
+- Risk Score: {risk_score}/100 ({risk_level})
+
+Holdings:
+{holdings_text}
+
+Sector Allocation:
+{json.dumps(metrics['sector_breakdown'], indent=2)}
+
+Provide a brief portfolio risk assessment in this exact format:
+SUMMARY: <2-3 sentence portfolio health summary>
+STRENGTHS: <1-2 bullet points>
+RISKS: <1-2 bullet points>
+SUGGESTIONS: <2-3 actionable rebalancing suggestions specific to KLSE/Bursa Malaysia>"""
+
+    ai_narrative = None
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+
+    # Tier 1: Claude
+    if anthropic_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            resp = client.messages.create(
+                model="claude-sonnet-4-20250514", max_tokens=500, temperature=0.0,
+                messages=[{"role": "user", "content": risk_prompt}],
+            )
+            ai_narrative = {"text": resp.content[0].text.strip(), "source": "claude_sonnet"}
+        except Exception as e:
+            logger.error(f"Claude portfolio risk failed: {e}")
+
+    # Tier 2: OpenAI
+    if ai_narrative is None and openai_key:
+        try:
+            import openai
+            client = openai.OpenAI(api_key=openai_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o", max_tokens=500, temperature=0.0,
+                messages=[
+                    {"role": "system", "content": "You are a senior portfolio risk analyst specialising in Bursa Malaysia / KLSE."},
+                    {"role": "user", "content": risk_prompt},
+                ],
+            )
+            ai_narrative = {"text": resp.choices[0].message.content.strip(), "source": "openai_gpt4o"}
+        except Exception as e:
+            logger.error(f"OpenAI portfolio risk failed: {e}")
+
+    # Tier 3: Rule-based
+    if ai_narrative is None:
+        summary = f"Portfolio has {len(holdings)} holdings across {num_sectors} sectors. "
+        if risk_level == "LOW":
+            summary += "Well-diversified with manageable concentration."
+        elif risk_level == "MEDIUM":
+            summary += "Moderate concentration risk. Consider adding more sectors."
+        else:
+            summary += "High concentration risk. Portfolio is heavily weighted in few positions."
+        ai_narrative = {"text": f"SUMMARY: {summary}\nSTRENGTHS: - {num_sectors} sector coverage\nRISKS: - Top position at {max_weight:.0f}%\nSUGGESTIONS: - Consider rebalancing top-heavy positions", "source": "rule_based"}
+
+    # Cache
+    try:
+        supabase_client.table("portfolio_analysis").upsert({
+            "user_id": user_id,
+            "risk_score": risk_score,
+            "analysis": {**metrics, "ai_narrative": ai_narrative},
+        }, on_conflict="user_id").execute()
+    except Exception:
+        pass
+
+    return jsonify({**metrics, "ai_narrative": ai_narrative})
+
+
+# ═══════════ SEO Routes ═══════════
+
+@app.route("/robots.txt")
+def robots_txt():
+    content = "User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n"
+    return content, 200, {"Content-Type": "text/plain"}
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    from datetime import datetime
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://bursakinetic.com/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>"""
+    return xml, 200, {"Content-Type": "application/xml"}
 
 
 @app.route("/api/sentiment")
