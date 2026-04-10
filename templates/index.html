@@ -1109,14 +1109,17 @@ async function authSubmit() {
   $('#authError').textContent = '';
   try {
     if (authMode === 'signup') {
-      // Step 1: Create account with password
-      const res = await sbClient.auth.signUp({email, password: pw});
+      // Step 1: Create account with password — redirect confirmation to /auth/confirm
+      const redirectUrl = window.location.origin + '/auth/confirm';
+      const res = await sbClient.auth.signUp({
+        email,
+        password: pw,
+        options: { emailRedirectTo: redirectUrl }
+      });
       if (res.error) throw res.error;
-      // Step 2: Send OTP code for email verification
-      pendingOtpEmail = email;
-      const otpRes = await sbClient.auth.signInWithOtp({email});
-      if (otpRes.error) throw otpRes.error;
-      showOtpStep(email);
+      // Show message: check your email for the confirmation link
+      hideAuthModal();
+      showSignupSuccessMessage(email);
     } else {
       // Login: Sign in with password directly
       const res = await sbClient.auth.signInWithPassword({email, password: pw});
@@ -1129,6 +1132,18 @@ async function authSubmit() {
     $('#authError').textContent = err.message || 'Authentication failed';
   } finally {
     $('#authSubmitBtn').disabled = false;
+  }
+}
+function showSignupSuccessMessage(email) {
+  // Show a confirmation-pending message on the landing page
+  const hero = document.querySelector('.hero-section');
+  if (hero) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'margin-top:var(--sp-6);padding:var(--sp-4) var(--sp-6);background:var(--accent-muted);border:1px solid rgba(59,130,246,0.3);border-radius:var(--radius-md);text-align:center;max-width:480px;margin-left:auto;margin-right:auto';
+    msg.innerHTML = '<div style="font-size:24px;margin-bottom:8px">&#9993;</div>'
+      + '<div style="font-weight:600;font-size:15px;margin-bottom:4px">Check Your Email</div>'
+      + '<div style="color:var(--text-secondary);font-size:13px">We sent a confirmation link to <strong style="color:var(--accent)">' + email + '</strong>.<br>Click the link to verify your account, then enter your OTP code.</div>';
+    hero.appendChild(msg);
   }
 }
 function showOtpStep(email) {

@@ -457,6 +457,16 @@ def index():
     )
 
 
+@app.route("/auth/confirm")
+def auth_confirm():
+    """Landing page after email confirmation link click."""
+    return render_template(
+        "confirm.html",
+        supabase_url=SUPABASE_URL,
+        supabase_anon_key=SUPABASE_ANON_KEY,
+    )
+
+
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok", "timestamp": time.time()})

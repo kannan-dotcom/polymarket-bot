@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Email Confirmed &mdash; Bursa Kinetic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg-0:#0a0e17;--bg-1:#0f1520;--bg-2:#151c2b;
+  --glass-bg:rgba(255,255,255,0.08);--glass-border:rgba(255,255,255,0.12);
+  --text-primary:#ffffff;--text-secondary:rgba(255,255,255,0.70);--text-tertiary:rgba(255,255,255,0.40);
+  --accent:#3b82f6;--accent-hover:#2563eb;--accent-muted:rgba(59,130,246,0.18);
+  --green:#22c55e;--green-muted:rgba(34,197,94,0.15);
+  --red:#ef4444;--cyan:#06b6d4;
+  --radius-sm:8px;--radius-md:12px;--radius-lg:16px;
+  --shadow-lg:0 8px 32px rgba(0,0,0,0.5),0 2px 10px rgba(0,0,0,0.4);
+  --sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-6:24px;--sp-8:32px;
+}
+body{
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  background:var(--bg-0);color:var(--text-primary);
+  background-image:radial-gradient(ellipse at 20% 0%,rgba(59,130,246,0.08) 0%,transparent 50%),
+                   radial-gradient(ellipse at 80% 100%,rgba(168,85,247,0.06) 0%,transparent 50%);
+  background-attachment:fixed;
+  font-size:13px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+  display:flex;align-items:center;justify-content:center;
+}
+.confirm-card{
+  width:460px;max-width:90vw;
+  background:var(--bg-1);border:1px solid var(--glass-border);
+  border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);
+  padding:var(--sp-8);text-align:center;
+  animation:fadeIn 0.4s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.confirm-icon{
+  width:72px;height:72px;margin:0 auto var(--sp-6);
+  background:var(--green-muted);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:36px;
+  animation:scaleIn 0.5s ease 0.2s both;
+}
+@keyframes scaleIn{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
+.confirm-card h1{
+  font-size:22px;font-weight:700;margin-bottom:var(--sp-2);
+  background:linear-gradient(135deg,var(--green),var(--cyan));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.confirm-card h2{
+  font-size:18px;font-weight:700;margin-bottom:var(--sp-2);
+  background:linear-gradient(135deg,var(--accent),var(--cyan));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.confirm-sub{font-size:13px;color:var(--text-secondary);margin-bottom:var(--sp-6);line-height:1.6}
+.confirm-email{
+  font-weight:600;color:var(--accent);
+}
+.divider{
+  width:60px;height:2px;margin:var(--sp-6) auto;
+  background:linear-gradient(90deg,transparent,var(--glass-border),transparent);
+}
+.otp-section{margin-top:var(--sp-4)}
+.otp-row{display:flex;gap:8px;justify-content:center;margin:var(--sp-4) 0}
+.otp-box{
+  width:46px;height:52px;text-align:center;font-size:22px;font-weight:700;
+  background:var(--bg-2);border:1px solid var(--glass-border);border-radius:var(--radius-sm);
+  color:var(--text-primary);font-family:inherit;outline:none;transition:border-color .2s;
+}
+.otp-box:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-muted)}
+.verify-btn{
+  width:100%;padding:12px;border:none;border-radius:var(--radius-sm);
+  background:linear-gradient(135deg,var(--accent),#2563eb);color:#fff;
+  font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
+  transition:opacity .2s;margin-top:var(--sp-3);
+}
+.verify-btn:hover{opacity:0.9}
+.verify-btn:disabled{opacity:0.5;cursor:not-allowed}
+.otp-error{color:var(--red);font-size:11px;margin-top:var(--sp-2);min-height:16px}
+.resend-row{margin-top:var(--sp-3);font-size:12px;color:var(--text-tertiary)}
+.resend-row a{color:var(--accent);cursor:pointer;text-decoration:none;font-weight:500}
+.resend-row a:hover{color:var(--accent-hover)}
+
+/* Success state */
+.success-card{display:none}
+.success-card .confirm-icon{background:var(--green-muted)}
+.redirect-text{font-size:12px;color:var(--text-tertiary);margin-top:var(--sp-4)}
+.redirect-text .countdown{font-weight:700;color:var(--accent)}
+
+/* Status messages */
+.status-msg{
+  padding:var(--sp-3) var(--sp-4);border-radius:var(--radius-sm);
+  font-size:12px;margin-bottom:var(--sp-4);display:none;
+}
+.status-msg.error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:var(--red);display:block}
+.status-msg.info{background:var(--accent-muted);border:1px solid rgba(59,130,246,0.2);color:var(--accent);display:block}
+
+.brand{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--text-tertiary);margin-bottom:var(--sp-4)}
+</style>
+</head>
+<body>
+
+<!-- Step 1: Email Confirmed + OTP Entry -->
+<div class="confirm-card" id="otpCard">
+  <div class="brand">BURSA KINETIC</div>
+  <div class="confirm-icon">&#10003;</div>
+  <h1>Email Confirmed!</h1>
+  <div class="confirm-sub">
+    Thank you for verifying your email.<br>
+    One last step &mdash; enter the <strong>6-digit code</strong> we sent to<br>
+    <span class="confirm-email" id="userEmail">your email</span>
+  </div>
+
+  <div id="statusMsg" class="status-msg"></div>
+
+  <div class="otp-section">
+    <div class="otp-row">
+      <input class="otp-box" id="otp1" maxlength="1" inputmode="numeric" autofocus>
+      <input class="otp-box" id="otp2" maxlength="1" inputmode="numeric">
+      <input class="otp-box" id="otp3" maxlength="1" inputmode="numeric">
+      <input class="otp-box" id="otp4" maxlength="1" inputmode="numeric">
+      <input class="otp-box" id="otp5" maxlength="1" inputmode="numeric">
+      <input class="otp-box" id="otp6" maxlength="1" inputmode="numeric">
+    </div>
+    <div class="otp-error" id="otpError"></div>
+    <button class="verify-btn" id="verifyBtn" onclick="verifyOtp()">Verify &amp; Continue</button>
+    <div class="resend-row">
+      <a onclick="resendOtp()" id="resendLink">Resend Code</a>
+      <span id="resendTimer" style="display:none"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Step 2: All Done -->
+<div class="confirm-card success-card" id="successCard">
+  <div class="brand">BURSA KINETIC</div>
+  <div class="confirm-icon" style="background:var(--green-muted)">&#x1F680;</div>
+  <h2>You're All Set!</h2>
+  <div class="confirm-sub">
+    Your account is verified and ready to use.<br>
+    Upload your portfolio screenshot and get AI-powered analysis.
+  </div>
+  <a href="/" class="verify-btn" style="display:inline-block;text-decoration:none;text-align:center">
+    Go to Dashboard &rarr;
+  </a>
+  <div class="redirect-text">
+    Redirecting in <span class="countdown" id="countdown">5</span> seconds...
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const SUPABASE_URL = '{{ supabase_url | safe }}';
+const SUPABASE_ANON_KEY = '{{ supabase_anon_key | safe }}';
+let sbClient = null;
+let userEmail = '';
+
+// Init Supabase
+if (SUPABASE_URL && SUPABASE_ANON_KEY && typeof supabase !== 'undefined') {
+  try {
+    const createFn = supabase.createClient || (supabase.default && supabase.default.createClient);
+    if (createFn) sbClient = createFn(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch(e) { console.error('Supabase init:', e); }
+}
+
+// Process the confirmation token from URL hash
+// Supabase redirects with: #access_token=...&type=signup&...
+async function processConfirmation() {
+  const hash = window.location.hash.substring(1);
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get('access_token');
+  const refreshToken = params.get('refresh_token');
+  const type = params.get('type');
+
+  if (accessToken && sbClient) {
+    try {
+      // Set the session from the confirmation tokens
+      const { data, error } = await sbClient.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken || '',
+      });
+      if (data && data.user) {
+        userEmail = data.user.email || '';
+        $('#userEmail').textContent = userEmail;
+        console.log('[Confirm] Email confirmed for:', userEmail);
+
+        // If type is signup, the email is now confirmed
+        // Send OTP for the final verification step
+        try {
+          await sbClient.auth.signInWithOtp({ email: userEmail });
+          showStatus('A 6-digit code has been sent to ' + userEmail, 'info');
+          startResendTimer();
+        } catch(e) {
+          console.error('OTP send error:', e);
+          showStatus('Code sent to your email. Check your inbox.', 'info');
+        }
+      } else if (error) {
+        console.error('Set session error:', error);
+        showStatus('Confirmation processed. Enter the code from your email.', 'info');
+      }
+    } catch(e) {
+      console.error('Process confirmation error:', e);
+    }
+  } else if (!accessToken) {
+    // No token in URL — user might have navigated here directly
+    // Check if there's an existing session
+    if (sbClient) {
+      const { data } = await sbClient.auth.getSession();
+      if (data && data.session && data.session.user) {
+        userEmail = data.session.user.email || '';
+        $('#userEmail').textContent = userEmail;
+      } else {
+        showStatus('No confirmation token found. Please check your email for the confirmation link.', 'error');
+      }
+    }
+  }
+
+  // Clear hash from URL for cleanliness
+  if (window.location.hash) {
+    history.replaceState(null, '', window.location.pathname);
+  }
+}
+
+function showStatus(msg, type) {
+  const el = $('#statusMsg');
+  el.textContent = msg;
+  el.className = 'status-msg ' + type;
+}
+
+// OTP box auto-advance
+for (let i = 1; i <= 6; i++) {
+  const el = document.getElementById('otp' + i);
+  if (!el) continue;
+  el.addEventListener('input', function() {
+    this.value = this.value.replace(/[^0-9]/g, '');
+    if (this.value.length === 1 && i < 6) document.getElementById('otp' + (i + 1)).focus();
+    if (i === 6 && this.value.length === 1) verifyOtp();
+  });
+  el.addEventListener('keydown', function(e) {
+    if (e.key === 'Backspace' && !this.value && i > 1) document.getElementById('otp' + (i - 1)).focus();
+  });
+  el.addEventListener('paste', function(e) {
+    e.preventDefault();
+    const paste = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+    for (let j = 0; j < 6 && j < paste.length; j++) {
+      document.getElementById('otp' + (j + 1)).value = paste[j];
+    }
+    if (paste.length >= 6) verifyOtp();
+    else if (paste.length > 0) document.getElementById('otp' + Math.min(paste.length + 1, 6)).focus();
+  });
+}
+
+async function verifyOtp() {
+  const code = [1,2,3,4,5,6].map(i => $('#otp' + i).value).join('');
+  if (code.length !== 6) { $('#otpError').textContent = 'Please enter all 6 digits'; return; }
+  if (!sbClient || !userEmail) {
+    $('#otpError').textContent = 'Session error. Please go back and sign in.';
+    return;
+  }
+
+  $('#verifyBtn').disabled = true;
+  $('#verifyBtn').textContent = 'Verifying...';
+  $('#otpError').textContent = '';
+
+  try {
+    const res = await sbClient.auth.verifyOtp({
+      email: userEmail,
+      token: code,
+      type: 'email',
+    });
+    if (res.error) throw res.error;
+
+    // Success — show the success card
+    $('#otpCard').style.display = 'none';
+    $('#successCard').style.display = '';
+    startCountdown();
+  } catch(err) {
+    $('#otpError').textContent = err.message || 'Invalid code. Please try again.';
+    // Clear boxes
+    for (let i = 1; i <= 6; i++) document.getElementById('otp' + i).value = '';
+    $('#otp1').focus();
+  } finally {
+    $('#verifyBtn').disabled = false;
+    $('#verifyBtn').innerHTML = 'Verify &amp; Continue';
+  }
+}
+
+// Resend OTP
+let resendInterval = null;
+function startResendTimer() {
+  let sec = 60;
+  $('#resendLink').style.display = 'none';
+  $('#resendTimer').style.display = '';
+  $('#resendTimer').textContent = 'Resend in ' + sec + 's';
+  clearInterval(resendInterval);
+  resendInterval = setInterval(() => {
+    sec--;
+    if (sec <= 0) {
+      clearInterval(resendInterval);
+      $('#resendLink').style.display = '';
+      $('#resendTimer').style.display = 'none';
+    } else {
+      $('#resendTimer').textContent = 'Resend in ' + sec + 's';
+    }
+  }, 1000);
+}
+
+async function resendOtp() {
+  if (!sbClient || !userEmail) return;
+  try {
+    await sbClient.auth.signInWithOtp({ email: userEmail });
+    showStatus('New code sent to ' + userEmail, 'info');
+    startResendTimer();
+  } catch(e) {
+    console.error('Resend failed:', e);
+    showStatus('Failed to resend. Please try again.', 'error');
+  }
+}
+
+// Countdown + redirect after success
+function startCountdown() {
+  let sec = 5;
+  const el = $('#countdown');
+  const timer = setInterval(() => {
+    sec--;
+    el.textContent = sec;
+    if (sec <= 0) {
+      clearInterval(timer);
+      window.location.href = '/';
+    }
+  }, 1000);
+}
+
+// Run on page load
+processConfirmation();
+</script>
+</body>
+</html>
