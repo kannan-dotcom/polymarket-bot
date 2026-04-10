@@ -232,10 +232,22 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
 .sent-dot.bearish{background:var(--red);box-shadow:0 0 8px var(--red),0 0 16px rgba(239,68,68,0.3)}
 .sent-dot.neutral{background:var(--text-tertiary)}
 
-/* ───────── Trending bar ───────── */
-.trending-bar{display:flex;gap:var(--sp-2);overflow-x:auto;padding:var(--sp-2) 0;margin-bottom:var(--sp-3);scrollbar-width:thin}
-.trending-bar::-webkit-scrollbar{height:4px}
-.trending-bar::-webkit-scrollbar-thumb{background:var(--bg-3);border-radius:2px}
+/* ───────── Trending carousel ───────── */
+.trending-bar{
+  position:relative;overflow:hidden;
+  padding:var(--sp-2) 0;margin-bottom:var(--sp-3);
+  mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);
+}
+.trending-track{
+  display:flex;gap:var(--sp-2);width:max-content;
+  animation:carouselScroll 30s linear infinite;
+}
+.trending-bar:hover .trending-track{animation-play-state:paused}
+@keyframes carouselScroll{
+  0%{transform:translateX(0)}
+  100%{transform:translateX(-50%)}
+}
 .trending-legend{
   display:flex;gap:14px;align-items:center;font-size:10px;color:var(--text-tertiary);
   margin-bottom:4px;padding-left:2px;
@@ -904,7 +916,7 @@ tr.expand-row .expand-content{padding:var(--sp-3) var(--sp-4);font-size:11px;col
     <span><span class="dot" style="background:var(--text-tertiary)"></span> Neutral (40-60)</span>
     <span style="margin-left:4px">m = mentions | score = sentiment 0-100</span>
   </div>
-  <div class="trending-bar" id="trendingBar" style="display:none"></div>
+  <div class="trending-bar" id="trendingBar" style="display:none"><div class="trending-track" id="trendingTrack"></div></div>
 
   <!-- ═══════════ Fundamentals overview (investment mode) ═══════════ -->
   <div class="section-header" id="fundHeader" style="display:none">Top Fundamentals <span class="section-badge">FUNDAMENTALS</span></div>
@@ -2233,12 +2245,11 @@ function renderTrending(trendData) {
   $('#trendingHeader').style.display = '';
   $('#trendingLegend').style.display = '';
   $('#trendingBar').style.display = '';
-  let html = '';
+  let chips = '';
   for (const t of trendData.trending) {
     const color = t.sentiment_score > 60 ? 'var(--green)' : t.sentiment_score < 40 ? 'var(--red)' : 'var(--text-tertiary)';
     const sentLabel = t.sentiment_score > 60 ? 'Bullish' : t.sentiment_score < 40 ? 'Bearish' : 'Neutral';
     const trendArrow = t.mention_trend > 0.1 ? '&#9650;' : t.mention_trend < -0.1 ? '&#9660;' : '&#8212;';
-    // Snippets (up to 2 recent post excerpts)
     let snippetHtml = '';
     if (t.snippets && t.snippets.length) {
       snippetHtml = '<div class="chip-snippets">';
@@ -2249,7 +2260,7 @@ function renderTrending(trendData) {
       }
       snippetHtml += '</div>';
     }
-    html += `<div class="trending-chip">
+    chips += `<div class="trending-chip">
       <div class="chip-name" style="color:${color}">${t.stock_key} <span style="font-weight:400;font-size:10px;color:var(--text-tertiary)">${t.name || ''}</span></div>
       <div class="chip-stats">
         <span><span class="stat-label">Mentions</span> <span class="stat-val">${t.mention_count}</span></span>
@@ -2260,7 +2271,12 @@ function renderTrending(trendData) {
       ${snippetHtml}
     </div>`;
   }
-  $('#trendingBar').innerHTML = html;
+  // Duplicate chips for seamless infinite loop
+  const track = $('#trendingTrack');
+  track.innerHTML = chips + chips;
+  // Adjust speed based on number of chips (more chips = longer duration)
+  const count = trendData.trending.length;
+  track.style.animationDuration = Math.max(20, count * 4) + 's';
 }
 
 // ──── Forum posts ────
