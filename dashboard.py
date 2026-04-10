@@ -905,6 +905,37 @@ def _parse_ai_response(text, stock_key, cfg, scan, fund, targets):
     return result
 
 
+def _call_openai_analysis(prompt, stock_key, cfg, scan, fund, targets):
+    """Call OpenAI GPT-4o as fallback AI when Claude is unavailable."""
+    import openai
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return None
+
+    client = openai.OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        max_tokens=300,
+        temperature=0.0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a senior equity research analyst at Maybank Investment Bank "
+                    "covering Bursa Malaysia (KLSE). Respond EXACTLY in the structured "
+                    "format requested — one line per field, no extra text."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    response_text = response.choices[0].message.content.strip()
+    result = _parse_ai_response(response_text, stock_key, cfg, scan, fund, targets)
+    result["ai_source"] = "openai_gpt4o"
+    return result
+
+
 def _rule_based_analysis(stock_key, cfg, scan, fund, targets, patterns, sentiment):
     """Generate recommendation from existing signals without AI."""
     result = {
@@ -1079,14 +1110,16 @@ def api_ai_analysis(stock_key):
     pats = _get_pattern_data_for(ticker)
     sent = _get_sentiment_for(stock_key)
 
-    # Attempt Claude analysis
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    use_ai = bool(api_key) and _ai_daily_calls < AI_MAX_DAILY_CALLS
+    # 3-tier AI fallback: Claude Sonnet → OpenAI GPT-4o → Rule-based
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    result = None
 
-    if use_ai:
+    # Tier 1: Claude Sonnet (primary)
+    if anthropic_key and _ai_daily_calls < AI_MAX_DAILY_CALLS:
         try:
             import anthropic
-            client = anthropic.Anthropic(api_key=api_key)
+            client = anthropic.Anthropic(api_key=anthropic_key)
             prompt = _build_analysis_prompt(stock_key, cfg, scan, fund, targets, pats, sent)
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
@@ -1094,18 +1127,34 @@ def api_ai_analysis(stock_key):
                 temperature=0.0,
                 messages=[{"role": "user", "content": prompt}],
             )
-            response_text = response.content[0].text.strip()
-            result = _parse_ai_response(response_text, stock_key, cfg, scan, fund, targets)
+            result = _parse_ai_response(response.content[0].text.strip(),
+                                        stock_key, cfg, scan, fund, targets)
             with _ai_analysis_lock:
                 _ai_daily_calls += 1
-            logger.info(f"AI analysis for {stock_key}: {result['recommendation']} "
+            logger.info(f"AI analysis (Claude) for {stock_key}: {result['recommendation']} "
                         f"({result['confidence']:.0%} confidence)")
         except Exception as e:
-            logger.error(f"AI analysis failed for {stock_key}: {e}")
-            result = _rule_based_analysis(stock_key, cfg, scan, fund, targets, pats, sent)
-            result["ai_source"] = "rule_based_fallback"
-    else:
+            logger.error(f"Claude analysis failed for {stock_key}: {e}")
+
+    # Tier 2: OpenAI GPT-4o (fallback AI)
+    if result is None and openai_key:
+        try:
+            prompt = _build_analysis_prompt(stock_key, cfg, scan, fund, targets, pats, sent)
+            result = _call_openai_analysis(prompt, stock_key, cfg, scan, fund, targets)
+            if result:
+                with _ai_analysis_lock:
+                    _ai_daily_calls += 1
+                logger.info(f"AI analysis (OpenAI) for {stock_key}: {result['recommendation']} "
+                            f"({result['confidence']:.0%} confidence)")
+        except Exception as e:
+            logger.error(f"OpenAI analysis failed for {stock_key}: {e}")
+            result = None
+
+    # Tier 3: Rule-based (final fallback)
+    if result is None:
         result = _rule_based_analysis(stock_key, cfg, scan, fund, targets, pats, sent)
+        if anthropic_key or openai_key:
+            result["ai_source"] = "rule_based_fallback"
 
     # Cache result
     with _ai_analysis_lock:

@@ -2114,8 +2114,10 @@ function renderAnalysisPanel(d) {
 
   // ──── Source footer ────
   const srcLabel = d.ai_source === 'claude_sonnet' ? 'Claude Sonnet AI' :
+                   d.ai_source === 'openai_gpt4o' ? 'OpenAI GPT-4o' :
                    d.ai_source === 'rule_based_fallback' ? 'Rule-Based (AI unavailable)' : 'Rule-Based';
-  const srcIcon = d.ai_source === 'claude_sonnet' ? '\u2728' : '\u2699';
+  const srcIcon = d.ai_source === 'claude_sonnet' ? '\u2728' :
+                  d.ai_source === 'openai_gpt4o' ? '\uD83E\uDD16' : '\u2699';
   const ts = d.timestamp ? new Date(d.timestamp * 1000).toLocaleTimeString() : '';
   const ncFooter = d.news_confidence != null ? ` | News Conf: ${nc}%` : '';
   html += `<div class="ai-source-footer">${srcIcon} ${srcLabel}${ncFooter} | Cached 5 min | ${ts}</div>`;
