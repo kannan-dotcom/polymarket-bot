@@ -50,6 +50,17 @@ FORUM_SOURCES = {
         "max_pages": 2,
         "rate_limit": 5.0,
     },
+    "theedge": {
+        "enabled": True,
+        "base_url": "https://theedgemalaysia.com",
+        "rate_limit": 5.0,
+    },
+    "thestar": {
+        "enabled": True,
+        "base_url": "https://www.thestar.com.my",
+        "business_url": "/business",
+        "rate_limit": 5.0,
+    },
     "investing_com": {
         "enabled": False,  # Returns 403
         "url": "https://www.investing.com/equities/bursa-malaysia-bhd-commentary",
@@ -65,25 +76,29 @@ FORUM_SOURCES = {
 # ============================================================
 SENTIMENT_WEIGHT = 0.10  # 10% of composite signal score
 
-# Weights WITH sentiment (7 sub-scores, total = 1.00)
+# Weights WITH sentiment (9 sub-scores, total = 1.00)
 WEIGHTS_WITH_SENTIMENT = {
-    "momentum": 0.18,
-    "rsi": 0.13,
-    "vwap": 0.13,
-    "ema": 0.13,
-    "volume": 0.09,
-    "vol_price": 0.24,
-    "sentiment": 0.10,
+    "momentum": 0.14,
+    "rsi": 0.10,
+    "vwap": 0.10,
+    "ema": 0.10,
+    "volume": 0.07,
+    "vol_price": 0.19,
+    "sentiment": 0.08,
+    "ichimoku": 0.12,
+    "pattern": 0.10,
 }
 
-# Weights WITHOUT sentiment (original 6 sub-scores, total = 1.00)
+# Weights WITHOUT sentiment (8 sub-scores, total = 1.00)
 WEIGHTS_WITHOUT_SENTIMENT = {
-    "momentum": 0.20,
-    "rsi": 0.15,
-    "vwap": 0.15,
-    "ema": 0.15,
-    "volume": 0.10,
-    "vol_price": 0.25,
+    "momentum": 0.16,
+    "rsi": 0.11,
+    "vwap": 0.11,
+    "ema": 0.11,
+    "volume": 0.08,
+    "vol_price": 0.21,
+    "ichimoku": 0.12,
+    "pattern": 0.10,
 }
 
 # ============================================================
@@ -91,7 +106,7 @@ WEIGHTS_WITHOUT_SENTIMENT = {
 # ============================================================
 SENTIMENT_PARAMS = {
     "min_mentions": 2,          # minimum mentions to generate a sentiment score
-    "decay_hours": 48,          # posts older than this get reduced weight
+    "decay_hours": 240,         # 10 days — posts older than this get discarded
     "buzz_threshold": 10,       # mentions above this = high buzz
     "strong_sentiment": 0.5,    # raw score above this = strong sentiment
     "cache_ttl": 600,           # 10 minutes cache per scraper
@@ -247,6 +262,47 @@ EVENT_KEYWORDS = {
         "weight": 1.5,
     },
 }
+
+# ============================================================
+# LLM SENTIMENT CLASSIFICATION (Anthropic Claude Sonnet)
+# ============================================================
+LLM_ENABLED = True  # Set False to use keyword-only scoring
+
+LLM_CONFIG = {
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 150,
+    "temperature": 0.0,           # deterministic classification
+    "batch_size": 5,              # posts per API call (batched for efficiency)
+    "max_calls_per_cycle": 20,    # cap API calls per scrape cycle (reduced for Sonnet cost)
+    "timeout": 10,                # seconds per API call
+    "fallback_on_error": True,    # fall back to keyword scoring on API failure
+    "min_text_length": 20,        # skip LLM for very short posts
+    "cache_ttl": 3600,            # cache LLM results for 1 hour
+}
+
+# Cost control: estimated ~$0.01 per batch of 5 posts with Sonnet
+LLM_COST_LIMIT_DAILY = 2.00  # USD daily spend cap (approximate)
+
+LLM_PROMPT_TEMPLATE = """You are a Malaysian stock market sentiment classifier. Analyze these forum posts and classify each as POSITIVE, NEGATIVE, or NOISE.
+
+Context: These posts are from Malaysian stock forums (Bursa Malaysia / KLSE). They may contain English, Malay (Bahasa Malaysia), or mixed language. Stock codes like "7113" or names like "TOPGLOV" refer to KLSE-listed companies.
+
+Rules:
+- POSITIVE: Post expresses bullish sentiment, reports good news, recommends buying, or contains catalysts likely to push the stock price up.
+- NEGATIVE: Post expresses bearish sentiment, reports bad news, recommends selling, or contains catalysts likely to push the stock price down.
+- NOISE: Post is neutral, off-topic, asks a question without clear sentiment, or is too vague to classify.
+
+For each post, respond with EXACTLY one line in this format:
+<index>|<label>|<confidence>|<reason>
+
+Where:
+- index: the post number (1, 2, 3...)
+- label: POSITIVE, NEGATIVE, or NOISE
+- confidence: 0.0 to 1.0 (how confident you are)
+- reason: brief 5-10 word explanation
+
+Posts:
+{posts}"""
 
 # ============================================================
 # PERSISTENCE

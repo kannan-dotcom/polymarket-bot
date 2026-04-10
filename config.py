@@ -76,9 +76,10 @@ STOCKS = {
     "TIMECOM": {"ticker": "5031.KL", "name": "Time dotCom", "exchange": "KLSE", "sector": "Telecom", "enabled": True},
     "TM": {"ticker": "4863.KL", "name": "Telekom Malaysia", "exchange": "KLSE", "sector": "Telecom", "enabled": True},
 
-    # ── Technology (15) ──────────────────────────────────────
+    # ── Technology (16) ──────────────────────────────────────
     "ATECH": {"ticker": "5302.KL", "name": "Aurelius Technologies", "exchange": "KLSE", "sector": "Technology", "enabled": True},
     "CORAZA": {"ticker": "0240.KL", "name": "Coraza Integrated Tech", "exchange": "KLSE", "sector": "Technology", "enabled": True},
+    "CTOS": {"ticker": "5301.KL", "name": "CTOS Digital", "exchange": "KLSE", "sector": "Technology", "enabled": True},
     "DUFU": {"ticker": "7233.KL", "name": "Dufu Technology", "exchange": "KLSE", "sector": "Technology", "enabled": True},
     "EG": {"ticker": "8907.KL", "name": "EG Industries", "exchange": "KLSE", "sector": "Technology", "enabled": True},
     "GREATEC": {"ticker": "0208.KL", "name": "Greatech Technology", "exchange": "KLSE", "sector": "Technology", "enabled": True},
@@ -162,7 +163,7 @@ STOCKS = {
     "UTDPLT": {"ticker": "2089.KL", "name": "United Plantations", "exchange": "KLSE", "sector": "Plantation", "enabled": True},
     "WTK": {"ticker": "4243.KL", "name": "WTK Holdings", "exchange": "KLSE", "sector": "Plantation", "enabled": True},
 
-    # ── REIT & Property (10) ─────────────────────────────────
+    # ── REIT & Property (11) ─────────────────────────────────
     "AXREIT": {"ticker": "5106.KL", "name": "Axis REIT", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "ECOWLD": {"ticker": "8206.KL", "name": "Eco World Development", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "IGBREIT": {"ticker": "5227.KL", "name": "IGB REIT", "exchange": "KLSE", "sector": "REIT", "enabled": True},
@@ -170,6 +171,7 @@ STOCKS = {
     "KLCC": {"ticker": "5235SS.KL", "name": "KLCCP Stapled", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "LAGENDA": {"ticker": "7179.KL", "name": "Lagenda Properties", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "MAHSING": {"ticker": "8583.KL", "name": "Mah Sing Group", "exchange": "KLSE", "sector": "REIT", "enabled": True},
+    "MALTON": {"ticker": "6181.KL", "name": "Malton Berhad", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "PAVREIT": {"ticker": "5212.KL", "name": "Pavilion REIT", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "UEMS": {"ticker": "5148.KL", "name": "UEM Sunrise", "exchange": "KLSE", "sector": "REIT", "enabled": True},
     "YTLREIT": {"ticker": "5109.KL", "name": "YTL Hospitality REIT", "exchange": "KLSE", "sector": "REIT", "enabled": True},
@@ -186,8 +188,35 @@ STOCKS = {
     "SIME": {"ticker": "4197.KL", "name": "Sime Darby", "exchange": "KLSE", "sector": "Conglomerate", "enabled": True},
     "SUNWAY": {"ticker": "5211.KL", "name": "Sunway Berhad", "exchange": "KLSE", "sector": "Conglomerate", "enabled": True},
 
-    # ── Media (1) ────────────────────────────────────────────
+    # ── Media (4) ────────────────────────────────────────────
     "ASTRO": {"ticker": "6399.KL", "name": "Astro Malaysia Holdings", "exchange": "KLSE", "sector": "Media", "enabled": True},
+    "CATCHA": {"ticker": "0173.KL", "name": "Catcha Digital", "exchange": "KLSE", "sector": "Media", "enabled": True},
+    "MEDIA": {"ticker": "4502.KL", "name": "Media Prima", "exchange": "KLSE", "sector": "Media", "enabled": True},
+    "STAR": {"ticker": "6084.KL", "name": "Star Media Group", "exchange": "KLSE", "sector": "Media", "enabled": True},
+
+    # ── Food & Beverage (1) ─────────────────────────────────
+    "FOODIE": {"ticker": "0382.KL", "name": "Foodie Media", "exchange": "KLSE", "sector": "Food & Beverage", "enabled": True},
+
+    # ── Education (1) ───────────────────────────────────────
+    "SASBADI": {"ticker": "5252.KL", "name": "Sasbadi Holdings", "exchange": "KLSE", "sector": "Education", "enabled": True},
+
+    # ── IPO 2026 — Recently Listed ──────────────────────────
+    # These stocks IPO'd in 2026 and are now actively trading
+    "ADNEX": {"ticker": "0396.KL", "name": "Adnex Group", "exchange": "KLSE", "sector": "Industrial", "enabled": True, "ipo_date": "2026-03-17"},
+    "AMBEST": {"ticker": "0391.KL", "name": "Ambest Group", "exchange": "KLSE", "sector": "Industrial", "enabled": True, "ipo_date": "2026-02-06"},
+    "GHS": {"ticker": "0387.KL", "name": "Guan Huat Seng Holdings", "exchange": "KLSE", "sector": "Industrial", "enabled": True, "ipo_date": "2026-01-01"},
+    "HOCKSOON": {"ticker": "5346.KL", "name": "Hock Soon Capital", "exchange": "KLSE", "sector": "Finance", "enabled": True, "ipo_date": "2026-01-01"},
+    "ISF": {"ticker": "0390.KL", "name": "ISF Group", "exchange": "KLSE", "sector": "Industrial", "enabled": True, "ipo_date": "2026-01-01"},
+    "OGM": {"ticker": "0389.KL", "name": "One Gasmaster Holdings", "exchange": "KLSE", "sector": "Industrial", "enabled": True, "ipo_date": "2026-01-01"},
+    "SBS": {"ticker": "0386.KL", "name": "SBS Nexus", "exchange": "KLSE", "sector": "Industrial", "enabled": True, "ipo_date": "2026-01-01"},
+    "SUNMED": {"ticker": "5555.KL", "name": "Sunway Healthcare Holdings", "exchange": "KLSE", "sector": "Healthcare", "enabled": True, "ipo_date": "2026-03-19"},
+
+    # ── IPO 2026 — Upcoming (disabled until listing date) ───
+    # These will be auto-enabled on their listing date
+    "5ER": {"ticker": "0397.KL", "name": "5E Resources Holdings", "exchange": "KLSE", "sector": "Industrial", "enabled": False, "ipo_date": "2026-04-15"},
+    "GDGROUP": {"ticker": "0398.KL", "name": "Golden Destinations Group", "exchange": "KLSE", "sector": "Consumer", "enabled": False, "ipo_date": "2026-04-16"},
+    "EMPIRE": {"ticker": "5351.KL", "name": "Empire Premium Food", "exchange": "KLSE", "sector": "Food & Beverage", "enabled": False, "ipo_date": "2026-04-17"},
+    "AMS": {"ticker": "0399.KL", "name": "AMS Advanced Material", "exchange": "KLSE", "sector": "Industrial", "enabled": False, "ipo_date": "2026-04-23"},
 }
 
 # ============================================================

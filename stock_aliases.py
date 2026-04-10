@@ -165,6 +165,37 @@ MANUAL_ALIASES = {
 
     # ── Media ────────────────────────────────────────────────
     "astro": "ASTRO", "astro malaysia": "ASTRO",
+    "catcha": "CATCHA", "catcha digital": "CATCHA",
+    "media": "MEDIA", "media prima": "MEDIA", "mediaprima": "MEDIA",
+    "star": "STAR", "star media": "STAR", "star media group": "STAR",
+
+    # ── Food & Beverage ─────────────────────────────────────
+    "foodie": "FOODIE", "foodie media": "FOODIE",
+
+    # ── Education ───────────────────────────────────────────
+    "sasbadi": "SASBADI", "sasbadi holdings": "SASBADI",
+
+    # ── Technology (additional) ─────────────────────────────
+    "ctos": "CTOS", "ctos digital": "CTOS",
+
+    # ── Property (additional) ───────────────────────────────
+    "malton": "MALTON", "malton bhd": "MALTON",
+
+    # ── IPO 2026 — Recently Listed ──────────────────────────
+    "adnex": "ADNEX", "adnex group": "ADNEX",
+    "ambest": "AMBEST", "ambest group": "AMBEST",
+    "ghs": "GHS", "guan huat seng": "GHS", "guan huat": "GHS",
+    "hocksoon": "HOCKSOON", "hock soon": "HOCKSOON", "hock soon capital": "HOCKSOON",
+    "isf": "ISF", "isf group": "ISF",
+    "ogm": "OGM", "one gasmaster": "OGM", "gasmaster": "OGM",
+    "sbs": "SBS", "sbs nexus": "SBS",
+    "sunmed": "SUNMED", "sunway healthcare": "SUNMED", "sunway health": "SUNMED",
+
+    # ── IPO 2026 — Upcoming ─────────────────────────────────
+    "5er": "5ER", "5e resources": "5ER",
+    "gdgroup": "GDGROUP", "golden destinations": "GDGROUP",
+    "empire": "EMPIRE", "empire premium": "EMPIRE", "empire sushi": "EMPIRE", "empire premium food": "EMPIRE",
+    "ams": "AMS", "ams advanced": "AMS", "ams advanced material": "AMS",
 }
 
 

@@ -3,11 +3,14 @@ Signal Engine — Generates BUY/SELL/HOLD signals for stocks using
 a composite scoring system based on technical indicators.
 
 Core strategy:
-1. Compute individual sub-scores from momentum, RSI, VWAP, EMA, volume-price
+1. Compute individual sub-scores from momentum, RSI, VWAP, EMA, volume-price,
+   Ichimoku Cloud, and chart pattern recognition
 2. Weighted composite → score 0-100
 3. Score >= 60 = BUY, score <= 40 = SELL, else HOLD
 4. Volume-price analysis: OBV trend, volume confirmation, activity level
-5. Confidence and edge calculated for position sizing
+5. Ichimoku Cloud: trend confirmation via cloud position and TK cross
+6. Pattern recognition: candlestick and chart formation signals
+7. Confidence and edge calculated for position sizing
 """
 
 import numpy as np
@@ -46,6 +49,8 @@ class Signal:
     volume_score: float = 50.0
     vol_price_score: float = 50.0  # volume-price analysis sub-score
     sentiment_score: float = 50.0  # forum sentiment sub-score
+    ichimoku_score: float = 50.0   # Ichimoku Cloud sub-score
+    pattern_score: float = 50.0    # chart pattern recognition sub-score
 
     @property
     def is_tradeable(self) -> bool:
@@ -69,9 +74,10 @@ class SignalEngine:
     from daily stock data into a composite score.
     """
 
-    def __init__(self, aggregator: MarketDataAggregator, sentiment_aggregator=None):
+    def __init__(self, aggregator: MarketDataAggregator, sentiment_aggregator=None, pattern_engine=None):
         self.agg = aggregator
         self.sentiment = sentiment_aggregator  # None if sentiment disabled
+        self.pattern_engine = pattern_engine   # None if pattern recognition disabled
         # Build reverse ticker map for sentiment lookup
         self._ticker_map = {cfg["ticker"]: key for key, cfg in STOCKS.items()}
 
@@ -185,6 +191,39 @@ class SignalEngine:
             if sent_data.buzz_score > 70:
                 reasons.append(f"High forum buzz: {sent_data.mention_count} mentions")
 
+        # (h) Ichimoku Cloud signal
+        ichimoku = snapshot.get("ichimoku")
+        ichi_score = 50.0
+        if ichimoku and ichimoku.get("tenkan_sen", 0) > 0:
+            ichi_score = self._ichimoku_signal(ichimoku)
+            scores.append(("ichimoku", ichi_score, weights["ichimoku"]))
+            # Reasons
+            if ichimoku["tk_cross"] == "bullish":
+                reasons.append("Ichimoku TK bullish cross")
+            elif ichimoku["tk_cross"] == "bearish":
+                reasons.append("Ichimoku TK bearish cross")
+            if ichimoku["price_vs_cloud"] == "above":
+                reasons.append("Price above Ichimoku cloud")
+            elif ichimoku["price_vs_cloud"] == "below":
+                reasons.append("Price below Ichimoku cloud")
+
+        # (i) Pattern recognition signal
+        pat_score = 50.0
+        pattern_result = None
+        if self.pattern_engine:
+            try:
+                pattern_result = self.pattern_engine.analyze(ticker)
+                if pattern_result and pattern_result.patterns_detected:
+                    pat_score = pattern_result.pattern_score
+                    scores.append(("pattern", pat_score, weights["pattern"]))
+                    if pattern_result.strongest_pattern:
+                        reasons.append(
+                            f"Pattern: {pattern_result.strongest_pattern} "
+                            f"({pattern_result.strongest_bias})"
+                        )
+            except Exception:
+                pass
+
         # ---- Composite score (0-100) ----
         weighted_sum = sum(score * weight for _, score, weight in scores)
         composite_score = float(np.clip(weighted_sum, 0, 100))
@@ -244,6 +283,8 @@ class SignalEngine:
             volume_score=vol_score,
             vol_price_score=vp_score,
             sentiment_score=sent_score,
+            ichimoku_score=ichi_score,
+            pattern_score=pat_score,
         )
 
     # ------------------------------------------------------------------
@@ -388,6 +429,48 @@ class SignalEngine:
             sum(s * w for s, w in components),
             0, 100,
         ))
+
+    def _ichimoku_signal(self, ichimoku: dict) -> float:
+        """
+        Convert Ichimoku Cloud data into a 0-100 score.
+        Combines: cloud signal, TK cross, price vs cloud, chikou confirmation.
+        """
+        score = 50.0
+
+        # Cloud color: bullish cloud (Senkou A > B) or bearish
+        if ichimoku["cloud_signal"] == "bullish":
+            score += 10
+        elif ichimoku["cloud_signal"] == "bearish":
+            score -= 10
+
+        # Price vs cloud: strongest signal
+        if ichimoku["price_vs_cloud"] == "above":
+            score += 15
+        elif ichimoku["price_vs_cloud"] == "below":
+            score -= 15
+        # Inside cloud = neutral (no change)
+
+        # TK cross: immediate momentum signal
+        if ichimoku["tk_cross"] == "bullish":
+            score += 12
+        elif ichimoku["tk_cross"] == "bearish":
+            score -= 12
+
+        # Tenkan vs Kijun (trend strength)
+        tenkan = ichimoku.get("tenkan_sen", 0)
+        kijun = ichimoku.get("kijun_sen", 0)
+        if kijun > 0:
+            tk_diff = (tenkan - kijun) / kijun
+            score += tk_diff * 200  # small differences amplified
+
+        # Cloud thickness: thicker cloud = stronger support/resistance
+        thickness = ichimoku.get("cloud_thickness", 0)
+        if ichimoku["price_vs_cloud"] == "above" and thickness > 0.02:
+            score += 5  # thick cloud below = strong support
+        elif ichimoku["price_vs_cloud"] == "below" and thickness > 0.02:
+            score -= 5  # thick cloud above = strong resistance
+
+        return float(np.clip(score, 5, 95))
 
     def _volatility_filter(self, volatility: float) -> float:
         """

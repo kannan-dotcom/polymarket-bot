@@ -11,10 +11,12 @@ Sources:
 - Lowyat Forum (forum.lowyat.net/StockExchange)
 """
 
+import os
 import re
 import time
 import json
 import logging
+import hashlib
 import threading
 from dataclasses import dataclass, field, asdict
 from typing import Optional
@@ -30,6 +32,10 @@ from sentiment_config import (
     BULLISH_EN, BEARISH_EN,
     BULLISH_MS, BEARISH_MS,
     EVENT_KEYWORDS,
+    LLM_ENABLED,
+    LLM_CONFIG,
+    LLM_PROMPT_TEMPLATE,
+    LLM_COST_LIMIT_DAILY,
 )
 
 logger = logging.getLogger("sentiment")
@@ -48,6 +54,10 @@ class ForumPost:
     raw_sentiment: float = 0.0
     author: str = ""
     url: str = ""
+    # LLM classification fields
+    llm_label: str = ""            # "POSITIVE", "NEGATIVE", "NOISE", or "" if not classified
+    llm_confidence: float = 0.0    # 0.0-1.0 confidence from LLM
+    llm_reason: str = ""           # brief LLM reasoning
 
 
 @dataclass
@@ -67,6 +77,12 @@ class StockSentiment:
     events: list[dict] = field(default_factory=list)  # detected company events
     event_impact: float = 0.0       # net event impact on sentiment (-1 to +1)
     has_catalyst: bool = False       # True if significant event detected
+    # LLM classification aggregates
+    llm_positive_pct: float = 0.0   # % of posts classified POSITIVE by LLM
+    llm_negative_pct: float = 0.0   # % of posts classified NEGATIVE by LLM
+    llm_noise_pct: float = 0.0      # % of posts classified NOISE by LLM
+    llm_classified_count: int = 0   # how many posts had LLM classification
+    llm_consensus: str = ""         # "POSITIVE", "NEGATIVE", "MIXED", "NOISE"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -164,6 +180,213 @@ class SentimentAnalyzer:
     def raw_to_score(raw: float) -> float:
         """Convert raw sentiment [-1, +1] to 0-100 score."""
         return 50.0 + raw * 50.0
+
+
+# ============================================================
+# LLM SENTIMENT CLASSIFIER — Anthropic Claude Sonnet
+# ============================================================
+
+class LLMSentimentClassifier:
+    """
+    Uses Anthropic Claude Sonnet to classify forum posts as
+    POSITIVE, NEGATIVE, or NOISE. Processes posts in batches
+    for efficiency. Falls back to keyword scoring on failure.
+    """
+
+    def __init__(self):
+        self._client = None
+        self._available = False
+        self._daily_calls = 0
+        self._daily_reset = time.time()
+        self._cache: dict[str, tuple[str, float, str]] = {}  # text_hash -> (label, confidence, reason)
+        self._cache_timestamps: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+        if not LLM_ENABLED:
+            logger.info("LLM sentiment classification disabled")
+            return
+
+        try:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                logger.warning("ANTHROPIC_API_KEY not set — LLM classification disabled")
+                return
+            self._client = anthropic.Anthropic(api_key=api_key)
+            self._available = True
+            logger.info("LLM sentiment classifier initialized (Claude Sonnet)")
+        except ImportError:
+            logger.warning("anthropic package not installed — LLM classification disabled")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Anthropic client: {e}")
+
+    @property
+    def is_available(self) -> bool:
+        return self._available and self._client is not None
+
+    def classify_posts(self, posts: list[ForumPost]) -> list[ForumPost]:
+        """
+        Classify a list of ForumPost objects using Claude Sonnet.
+        Updates each post's llm_label, llm_confidence, llm_reason in-place.
+        Returns the same list (mutated).
+        """
+        if not self.is_available:
+            return posts
+
+        # Reset daily counter if needed
+        now = time.time()
+        with self._lock:
+            if now - self._daily_reset > 86400:
+                self._daily_calls = 0
+                self._daily_reset = now
+
+        # Filter posts worth classifying
+        classifiable = [
+            p for p in posts
+            if len(p.text.strip()) >= LLM_CONFIG["min_text_length"]
+            and not self._check_cache(p.text)
+        ]
+
+        # Apply cached results to posts that have them
+        for p in posts:
+            cached = self._get_cache(p.text)
+            if cached:
+                p.llm_label, p.llm_confidence, p.llm_reason = cached
+
+        if not classifiable:
+            return posts
+
+        # Batch process
+        batch_size = LLM_CONFIG["batch_size"]
+        max_calls = LLM_CONFIG["max_calls_per_cycle"]
+        calls_made = 0
+
+        for i in range(0, len(classifiable), batch_size):
+            if calls_made >= max_calls:
+                logger.info(f"LLM call limit reached ({max_calls}), remaining posts use keyword scoring")
+                break
+
+            with self._lock:
+                if self._daily_calls >= (LLM_COST_LIMIT_DAILY / 0.01):
+                    logger.warning("LLM daily cost limit reached, skipping")
+                    break
+
+            batch = classifiable[i:i + batch_size]
+            try:
+                results = self._classify_batch(batch)
+                for post, result in zip(batch, results):
+                    post.llm_label = result[0]
+                    post.llm_confidence = result[1]
+                    post.llm_reason = result[2]
+                    self._set_cache(post.text, result)
+                calls_made += 1
+                with self._lock:
+                    self._daily_calls += 1
+            except Exception as e:
+                logger.error(f"LLM batch classification failed: {e}")
+                if not LLM_CONFIG["fallback_on_error"]:
+                    break
+                # Posts in this batch keep default empty llm_label
+
+        classified = sum(1 for p in posts if p.llm_label)
+        logger.info(f"LLM classified {classified}/{len(posts)} posts ({calls_made} API calls)")
+        return posts
+
+    def _classify_batch(self, batch: list[ForumPost]) -> list[tuple[str, float, str]]:
+        """Send a batch of posts to Claude Sonnet and parse results."""
+        # Format posts for the prompt
+        posts_text = ""
+        for idx, post in enumerate(batch, 1):
+            # Truncate to save tokens
+            text = post.text[:300].replace("\n", " ").strip()
+            posts_text += f"\n{idx}. [{post.source}] {text}"
+
+        prompt = LLM_PROMPT_TEMPLATE.format(posts=posts_text)
+
+        response = self._client.messages.create(
+            model=LLM_CONFIG["model"],
+            max_tokens=LLM_CONFIG["max_tokens"],
+            temperature=LLM_CONFIG["temperature"],
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        # Parse response
+        response_text = response.content[0].text.strip()
+        results = self._parse_response(response_text, len(batch))
+        return results
+
+    def _parse_response(self, text: str, expected_count: int) -> list[tuple[str, float, str]]:
+        """Parse LLM response into (label, confidence, reason) tuples."""
+        results = []
+        valid_labels = {"POSITIVE", "NEGATIVE", "NOISE"}
+
+        for line in text.strip().split("\n"):
+            line = line.strip()
+            if not line or "|" not in line:
+                continue
+            parts = line.split("|", 3)
+            if len(parts) < 3:
+                continue
+
+            try:
+                label = parts[1].strip().upper()
+                if label not in valid_labels:
+                    label = "NOISE"
+                confidence = float(parts[2].strip())
+                confidence = max(0.0, min(1.0, confidence))
+                reason = parts[3].strip() if len(parts) > 3 else ""
+                results.append((label, confidence, reason))
+            except (ValueError, IndexError):
+                results.append(("NOISE", 0.3, "parse error"))
+
+        # Pad if we got fewer results than expected
+        while len(results) < expected_count:
+            results.append(("NOISE", 0.0, "no response"))
+
+        return results[:expected_count]
+
+    def _check_cache(self, text: str) -> bool:
+        """Check if text has a cached LLM result."""
+        key = self._cache_key(text)
+        with self._lock:
+            if key in self._cache:
+                ts = self._cache_timestamps.get(key, 0)
+                if time.time() - ts < LLM_CONFIG["cache_ttl"]:
+                    return True
+                # Expired
+                del self._cache[key]
+                del self._cache_timestamps[key]
+        return False
+
+    def _get_cache(self, text: str) -> Optional[tuple[str, float, str]]:
+        """Get cached LLM result for text."""
+        key = self._cache_key(text)
+        with self._lock:
+            if key in self._cache:
+                ts = self._cache_timestamps.get(key, 0)
+                if time.time() - ts < LLM_CONFIG["cache_ttl"]:
+                    return self._cache[key]
+        return None
+
+    def _set_cache(self, text: str, result: tuple[str, float, str]):
+        """Cache an LLM result."""
+        key = self._cache_key(text)
+        with self._lock:
+            self._cache[key] = result
+            self._cache_timestamps[key] = time.time()
+            # Prune cache if too large (keep last 2000 entries)
+            if len(self._cache) > 2000:
+                oldest_keys = sorted(
+                    self._cache_timestamps, key=self._cache_timestamps.get
+                )[:500]
+                for k in oldest_keys:
+                    self._cache.pop(k, None)
+                    self._cache_timestamps.pop(k, None)
+
+    @staticmethod
+    def _cache_key(text: str) -> str:
+        """Generate a short hash key for text."""
+        return hashlib.md5(text[:300].encode("utf-8", errors="ignore")).hexdigest()
 
 
 # ============================================================
@@ -322,7 +545,7 @@ class I3InvestorScraper(BaseScraper):
 
     def fetch_posts(self) -> list[ForumPost]:
         posts = []
-        # Scrape the main blog/discussion page
+        # Scrape the main blog/discussion hub page
         url = f"{self.base_url}/web/blog/stock-market-pair"
         resp = self._get(url)
         if not resp:
@@ -330,13 +553,13 @@ class I3InvestorScraper(BaseScraper):
 
         try:
             soup = BeautifulSoup(resp.text, "html.parser")
-            # Find discussion/blog entries
-            for item in soup.select(".blogItem, .stockBlogItem, .blog-item, article, .post-item, .list-group-item"):
-                text = item.get_text(strip=True, separator=" ")
-                if len(text) < 10:
-                    continue
 
-                link = item.select_one("a[href]")
+            # 1) Blog entries from widget-data-row (news/blog posts)
+            for row in soup.select(".widget-data-row"):
+                text = row.get_text(strip=True, separator=" ")
+                if len(text) < 15:
+                    continue
+                link = row.select_one("a[href]")
                 url_str = ""
                 if link:
                     href = link.get("href", "")
@@ -344,13 +567,27 @@ class I3InvestorScraper(BaseScraper):
                         url_str = self.base_url + href
                     elif href.startswith("http"):
                         url_str = href
-
                 posts.append(ForumPost(
                     source=self.source_name,
                     text=text[:500],
                     timestamp=time.time(),
                     url=url_str,
                 ))
+
+            # 2) Stock discussion links from db-mod-card sections
+            for card in soup.select(".db-mod-card"):
+                for link in card.select("a[href]"):
+                    href = link.get("href", "")
+                    text = link.get_text(strip=True)
+                    if len(text) < 5 or "/forum/" not in href:
+                        continue
+                    url_str = self.base_url + href if href.startswith("/") else href
+                    posts.append(ForumPost(
+                        source=self.source_name,
+                        text=text[:500],
+                        timestamp=time.time(),
+                        url=url_str,
+                    ))
         except Exception as e:
             logger.error(f"[i3investor] Parse error: {e}")
 
@@ -463,6 +700,112 @@ class LowyatScraper(BaseScraper):
 
 
 # ============================================================
+# THE EDGE MALAYSIA SCRAPER
+# ============================================================
+
+class TheEdgeScraper(BaseScraper):
+    """Scrapes news headlines from theedgemalaysia.com via __NEXT_DATA__."""
+
+    def __init__(self):
+        cfg = FORUM_SOURCES["theedge"]
+        super().__init__("theedge", cfg.get("rate_limit", 5.0))
+        self.base_url = cfg["base_url"]
+
+    def fetch_posts(self) -> list[ForumPost]:
+        posts = []
+        resp = self._get(self.base_url)
+        if not resp:
+            return posts
+
+        try:
+            import re as _re
+            import json as _json
+            match = _re.search(
+                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                resp.text, _re.DOTALL,
+            )
+            if not match:
+                logger.warning("[theedge] No __NEXT_DATA__ found")
+                return posts
+
+            data = _json.loads(match.group(1))
+            pp = data.get("props", {}).get("pageProps", {})
+
+            # Extract articles from multiple sections
+            for section in ["homeData", "malaysiaNews", "wealthData"]:
+                for item in pp.get(section, []):
+                    if not isinstance(item, dict):
+                        continue
+                    title = item.get("title", "")
+                    if not title or len(title) < 10:
+                        continue
+                    nid = item.get("nid", "")
+                    url_str = f"{self.base_url}/node/{nid}" if nid else ""
+                    posts.append(ForumPost(
+                        source=self.source_name,
+                        text=title[:500],
+                        timestamp=time.time(),
+                        url=url_str,
+                    ))
+        except Exception as e:
+            logger.error(f"[theedge] Parse error: {e}")
+
+        logger.info(f"[theedge] Fetched {len(posts)} posts")
+        return posts
+
+
+# ============================================================
+# THE STAR BUSINESS SCRAPER
+# ============================================================
+
+class TheStarScraper(BaseScraper):
+    """Scrapes business headlines from thestar.com.my/business."""
+
+    def __init__(self):
+        cfg = FORUM_SOURCES["thestar"]
+        super().__init__("thestar", cfg.get("rate_limit", 5.0))
+        self.base_url = cfg["base_url"]
+
+    def fetch_posts(self) -> list[ForumPost]:
+        posts = []
+        url = f"{self.base_url}/business"
+        resp = self._get(url)
+        if not resp:
+            return posts
+
+        try:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            seen_texts = set()
+
+            # Collect all links pointing to /business/ articles
+            for link in soup.select('a[href*="/business/"]'):
+                text = link.get_text(strip=True)
+                href = link.get("href", "")
+                if len(text) < 15 or text in seen_texts:
+                    continue
+                # Skip nav/section links
+                if href.endswith("/business") or href.endswith("/business/"):
+                    continue
+                seen_texts.add(text)
+
+                url_str = href
+                if href.startswith("/"):
+                    url_str = self.base_url + href
+
+                posts.append(ForumPost(
+                    source=self.source_name,
+                    text=text[:500],
+                    timestamp=time.time(),
+                    url=url_str,
+                ))
+        except Exception as e:
+            logger.error(f"[thestar] Parse error: {e}")
+
+        logger.info(f"[thestar] Fetched {len(posts)} posts")
+        return posts
+
+
+# ============================================================
 # SENTIMENT AGGREGATOR
 # ============================================================
 
@@ -475,6 +818,7 @@ class SentimentAggregator:
     def __init__(self):
         self._lock = threading.Lock()
         self.analyzer = SentimentAnalyzer()
+        self.llm_classifier = LLMSentimentClassifier()
 
         # Initialize enabled scrapers
         self.scrapers: list[BaseScraper] = []
@@ -489,11 +833,15 @@ class SentimentAggregator:
             self.scrapers.append(MalaysiaStockBizScraper())
         if FORUM_SOURCES.get("lowyat", {}).get("enabled"):
             self.scrapers.append(LowyatScraper())
+        if FORUM_SOURCES.get("theedge", {}).get("enabled"):
+            self.scrapers.append(TheEdgeScraper())
+        if FORUM_SOURCES.get("thestar", {}).get("enabled"):
+            self.scrapers.append(TheStarScraper())
 
         # State
         self._sentiments: dict[str, StockSentiment] = {}
-        self._all_posts: list[ForumPost] = []         # rolling 48h window
-        self._prior_posts: list[ForumPost] = []       # previous 24h for trend
+        self._all_posts: list[ForumPost] = []         # rolling 10-day window
+        self._prior_posts: list[ForumPost] = []       # previous 3-day window for trend
         self._trending: list[dict] = []
         self._last_update: float = 0.0
         self._active_sources: int = 0
@@ -532,20 +880,41 @@ class SentimentAggregator:
             except Exception as e:
                 logger.error(f"Scraper {scraper.source_name} failed: {e}")
 
+        # --- LLM Classification ---
+        # Classify new posts with Claude Sonnet (only posts with stock mentions)
+        if self.llm_classifier.is_available and new_posts:
+            posts_with_mentions = [p for p in new_posts if p.stock_mentions]
+            if posts_with_mentions:
+                try:
+                    self.llm_classifier.classify_posts(posts_with_mentions)
+                    # Blend LLM label into raw_sentiment for classified posts
+                    for post in posts_with_mentions:
+                        if post.llm_label and post.llm_confidence > 0.3:
+                            llm_raw = _llm_label_to_raw(post.llm_label, post.llm_confidence)
+                            # Blend: 60% LLM, 40% keyword (LLM gets more weight when confident)
+                            blend_weight = min(post.llm_confidence, 0.8)
+                            post.raw_sentiment = (
+                                post.raw_sentiment * (1 - blend_weight)
+                                + llm_raw * blend_weight
+                            )
+                            post.raw_sentiment = max(-1.0, min(1.0, post.raw_sentiment))
+                except Exception as e:
+                    logger.error(f"LLM classification pipeline error: {e}")
+
         # Update rolling windows
         now = time.time()
-        cutoff_48h = now - (SENTIMENT_PARAMS["decay_hours"] * 3600)
-        cutoff_24h = now - (24 * 3600)
+        cutoff_decay = now - (SENTIMENT_PARAMS["decay_hours"] * 3600)  # 10 days
+        cutoff_recent = now - (72 * 3600)  # 3 days = "recent" window
 
         with self._lock:
-            # Move current posts older than 24h to prior
+            # Prior posts: older than 3 days but within 10-day window (for trend calc)
             self._prior_posts = [
                 p for p in self._all_posts
-                if p.timestamp < cutoff_24h and p.timestamp >= cutoff_48h
+                if p.timestamp < cutoff_recent and p.timestamp >= cutoff_decay
             ]
-            # Keep posts within 48h + add new ones
+            # Keep posts within 10-day window + add new ones
             self._all_posts = [
-                p for p in self._all_posts if p.timestamp >= cutoff_48h
+                p for p in self._all_posts if p.timestamp >= cutoff_decay
             ] + new_posts
 
             # Recompute per-stock sentiment
@@ -555,10 +924,11 @@ class SentimentAggregator:
 
         # Persist cache
         self._save_cache()
+        llm_status = f", LLM active" if self.llm_classifier.is_available else ""
         logger.info(
             f"Sentiment update: {active_sources} sources, "
             f"{len(new_posts)} new posts, "
-            f"{len(self._sentiments)} stocks with mentions"
+            f"{len(self._sentiments)} stocks with mentions{llm_status}"
         )
 
     def _compute_sentiments(self):
@@ -661,6 +1031,9 @@ class SentimentAggregator:
                     "text": p.text[:200],
                     "sentiment": round(p.raw_sentiment, 2),
                     "time": p.timestamp,
+                    "llm_label": p.llm_label,
+                    "llm_confidence": round(p.llm_confidence, 2),
+                    "llm_reason": p.llm_reason,
                 }
                 for p in sorted_posts
             ]
@@ -678,6 +1051,28 @@ class SentimentAggregator:
                     }
             event_list = list(unique_events.values())
 
+            # LLM classification aggregates
+            llm_classified = [p for p in posts if p.llm_label]
+            llm_count = len(llm_classified)
+            llm_pos = sum(1 for p in llm_classified if p.llm_label == "POSITIVE")
+            llm_neg = sum(1 for p in llm_classified if p.llm_label == "NEGATIVE")
+            llm_noise = sum(1 for p in llm_classified if p.llm_label == "NOISE")
+            llm_pos_pct = round(llm_pos / llm_count * 100, 1) if llm_count else 0.0
+            llm_neg_pct = round(llm_neg / llm_count * 100, 1) if llm_count else 0.0
+            llm_noise_pct = round(llm_noise / llm_count * 100, 1) if llm_count else 0.0
+
+            # Determine LLM consensus
+            if llm_count == 0:
+                llm_consensus = ""
+            elif llm_pos_pct >= 60:
+                llm_consensus = "POSITIVE"
+            elif llm_neg_pct >= 60:
+                llm_consensus = "NEGATIVE"
+            elif llm_noise_pct >= 60:
+                llm_consensus = "NOISE"
+            else:
+                llm_consensus = "MIXED"
+
             sentiments[stock_key] = StockSentiment(
                 stock_key=stock_key,
                 mention_count=len(posts),
@@ -693,6 +1088,11 @@ class SentimentAggregator:
                 events=event_list,
                 event_impact=round(event_impact, 2),
                 has_catalyst=len(event_list) > 0,
+                llm_positive_pct=llm_pos_pct,
+                llm_negative_pct=llm_neg_pct,
+                llm_noise_pct=llm_noise_pct,
+                llm_classified_count=llm_count,
+                llm_consensus=llm_consensus,
             )
 
         self._sentiments = sentiments
@@ -765,6 +1165,9 @@ class SentimentAggregator:
                     "time": p.timestamp,
                     "author": p.author,
                     "url": p.url,
+                    "llm_label": p.llm_label,
+                    "llm_confidence": round(p.llm_confidence, 2),
+                    "llm_reason": p.llm_reason,
                 }
                 for p in sorted_posts
             ]
@@ -779,6 +1182,7 @@ class SentimentAggregator:
                 "last_update": self._last_update,
                 "most_bullish": self._get_extreme("bullish"),
                 "most_bearish": self._get_extreme("bearish"),
+                "llm_active": self.llm_classifier.is_available,
             }
 
     def _get_extreme(self, direction: str) -> Optional[dict]:
@@ -833,3 +1237,17 @@ class SentimentAggregator:
             logger.info("No sentiment cache found, starting fresh")
         except Exception as e:
             logger.error(f"Failed to load sentiment cache: {e}")
+
+
+# ============================================================
+# UTILITY
+# ============================================================
+
+def _llm_label_to_raw(label: str, confidence: float) -> float:
+    """Convert LLM label + confidence to raw sentiment [-1, +1]."""
+    if label == "POSITIVE":
+        return confidence * 0.8   # max +0.8
+    elif label == "NEGATIVE":
+        return -confidence * 0.8  # max -0.8
+    else:  # NOISE
+        return 0.0

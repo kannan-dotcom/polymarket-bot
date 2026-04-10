@@ -344,6 +344,81 @@ class MarketDataAggregator:
             return 0.0
         return float((recent_avg - prior_avg) / prior_avg)
 
+    def compute_ichimoku(self, feed: PriceFeed) -> dict:
+        """
+        Ichimoku Cloud indicator.
+        Returns dict with tenkan_sen, kijun_sen, senkou_a, senkou_b, chikou_span,
+        and derived signals (cloud_signal, tk_cross, price_vs_cloud).
+        """
+        highs = self.highs(feed)
+        lows = self.lows(feed)
+        closes = self.closes(feed)
+        n = len(closes)
+
+        result = {
+            "tenkan_sen": 0.0,
+            "kijun_sen": 0.0,
+            "senkou_a": 0.0,
+            "senkou_b": 0.0,
+            "chikou_span": 0.0,
+            "cloud_signal": "neutral",   # bullish/bearish/neutral
+            "tk_cross": "none",          # bullish/bearish/none
+            "price_vs_cloud": "inside",  # above/below/inside
+            "cloud_thickness": 0.0,      # normalized cloud thickness
+        }
+
+        if n < 52:
+            return result
+
+        # Tenkan-sen (Conversion Line): (9-period high + 9-period low) / 2
+        tenkan = (np.max(highs[-9:]) + np.min(lows[-9:])) / 2.0
+        # Kijun-sen (Base Line): (26-period high + 26-period low) / 2
+        kijun = (np.max(highs[-26:]) + np.min(lows[-26:])) / 2.0
+        # Senkou Span A (Leading Span A): (Tenkan + Kijun) / 2 (plotted 26 periods ahead)
+        senkou_a = (tenkan + kijun) / 2.0
+        # Senkou Span B (Leading Span B): (52-period high + 52-period low) / 2
+        senkou_b = (np.max(highs[-52:]) + np.min(lows[-52:])) / 2.0
+        # Chikou Span (Lagging Span): current close plotted 26 periods behind
+        chikou = closes[-1]
+
+        result["tenkan_sen"] = float(tenkan)
+        result["kijun_sen"] = float(kijun)
+        result["senkou_a"] = float(senkou_a)
+        result["senkou_b"] = float(senkou_b)
+        result["chikou_span"] = float(chikou)
+
+        # Cloud signal: bullish when Senkou A > Senkou B
+        if senkou_a > senkou_b:
+            result["cloud_signal"] = "bullish"
+        elif senkou_a < senkou_b:
+            result["cloud_signal"] = "bearish"
+
+        # TK cross: Tenkan crossing Kijun
+        if n >= 27:
+            prev_tenkan = (np.max(highs[-10:-1]) + np.min(lows[-10:-1])) / 2.0
+            prev_kijun = (np.max(highs[-27:-1]) + np.min(lows[-27:-1])) / 2.0
+            if tenkan > kijun and prev_tenkan <= prev_kijun:
+                result["tk_cross"] = "bullish"
+            elif tenkan < kijun and prev_tenkan >= prev_kijun:
+                result["tk_cross"] = "bearish"
+
+        # Price vs cloud
+        cloud_top = max(senkou_a, senkou_b)
+        cloud_bottom = min(senkou_a, senkou_b)
+        price = closes[-1]
+        if price > cloud_top:
+            result["price_vs_cloud"] = "above"
+        elif price < cloud_bottom:
+            result["price_vs_cloud"] = "below"
+        else:
+            result["price_vs_cloud"] = "inside"
+
+        # Normalized cloud thickness (relative to price)
+        if price > 0:
+            result["cloud_thickness"] = float(abs(senkou_a - senkou_b) / price)
+
+        return result
+
     def get_snapshot(self, ticker: str) -> Optional[dict]:
         """
         Full snapshot of derived metrics for a ticker.
@@ -361,6 +436,9 @@ class MarketDataAggregator:
         # Volume stats
         daily_volume = float(volumes[-1]) if len(volumes) > 0 else 0.0
         avg_volume_20 = float(np.mean(volumes[-20:])) if len(volumes) >= 20 else float(np.mean(volumes))
+
+        # Ichimoku Cloud
+        ichimoku = self.compute_ichimoku(feed)
 
         return {
             "ticker": ticker,
@@ -383,4 +461,6 @@ class MarketDataAggregator:
             "volume_trend": self.compute_volume_trend(feed),
             "obv_trend": self.compute_obv_trend(feed),
             "vol_price_confirm": self.compute_volume_price_confirm(feed),
+            # Ichimoku Cloud
+            "ichimoku": ichimoku,
         }
