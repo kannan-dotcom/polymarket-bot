@@ -1325,20 +1325,31 @@ async function handleUpload(files) {
   }
   for (const file of files) {
     if (file.size > 5 * 1024 * 1024) { alert('File too large: ' + file.name + ' (max 5MB)'); continue; }
-    const ext = file.name.split('.').pop();
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['png','jpg','jpeg','webp'].includes(ext)) { alert('Only PNG/JPG images allowed'); continue; }
     const storagePath = currentUser.id + '/' + Date.now() + '.' + ext;
     try {
-      const {error: upErr} = await sbClient.storage.from('portfolio-screenshots').upload(storagePath, file, {contentType: file.type});
-      if (upErr) throw upErr;
-      const token = await getToken();
+      // Step 1: Upload file to Supabase Storage
+      const {data: upData, error: upErr} = await sbClient.storage.from('portfolio-screenshots').upload(storagePath, file, {contentType: file.type});
+      if (upErr) { alert('Storage upload failed: ' + (upErr.message || upErr.error || JSON.stringify(upErr))); continue; }
+
+      // Step 2: Record upload in database
+      const tkn = await getToken();
+      if (!tkn) { alert('Session expired. Please sign in again.'); return; }
       const recRes = await fetch('/api/user/uploads', {
         method: 'POST',
-        headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+        headers: {'Authorization': 'Bearer ' + tkn, 'Content-Type': 'application/json'},
         body: JSON.stringify({filename: file.name, storage_path: storagePath}),
       });
+      if (!recRes.ok) {
+        const errText = await recRes.text();
+        console.error('Record upload failed:', recRes.status, errText);
+        alert('Failed to record upload (status ' + recRes.status + '). The file was uploaded but could not be registered.');
+        continue;
+      }
       const rec = await recRes.json();
       loadUserUploads();
-      // Auto-trigger AI analysis
+      // Step 3: Auto-trigger AI analysis
       analyzeScreenshot(rec.upload?.id || '', storagePath);
     } catch(e) { console.error('Upload failed:', e); alert('Upload failed: ' + (e.message || e)); }
   }
@@ -1398,6 +1409,12 @@ async function analyzeScreenshot(uploadId, storagePath) {
       body: JSON.stringify({upload_id: uploadId, storage_path: storagePath}),
     });
     $('#extractionBar').style.width = '90%';
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Analysis endpoint error:', res.status, errText);
+      alert('Analysis failed (status ' + res.status + '). Please try again.');
+      return;
+    }
     const data = await res.json();
     if (data.error) { alert('Analysis: ' + data.error); return; }
     setTimeout(() => {
