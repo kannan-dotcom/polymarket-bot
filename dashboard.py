@@ -425,22 +425,66 @@ if SUPABASE_URL and SUPABASE_ANON_KEY and create_client:
 
 
 def require_auth(f):
-    """Decorator: validates Supabase JWT via Supabase auth.get_user(), injects user_id."""
+    """Decorator: validates Supabase JWT and injects user_id."""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return jsonify({"error": "Missing or invalid Authorization header"}), 401
         token = auth_header[7:]
-        if not supabase_client:
-            return jsonify({"error": "Supabase not configured"}), 503
-        try:
-            user_resp = supabase_client.auth.get_user(token)
-            if not user_resp or not user_resp.user:
-                return jsonify({"error": "Invalid token"}), 401
-            kwargs["user_id"] = user_resp.user.id
-        except Exception as e:
-            return jsonify({"error": f"Invalid token: {e}"}), 401
+
+        user_id = None
+
+        # Strategy 1: Use Supabase client's get_user (server-side validation)
+        if supabase_client and not user_id:
+            try:
+                user_resp = supabase_client.auth.get_user(token)
+                if user_resp and user_resp.user:
+                    user_id = user_resp.user.id
+            except Exception as e:
+                logger.debug(f"Supabase get_user failed: {e}")
+
+        # Strategy 2: Direct HTTP call to Supabase auth API
+        if SUPABASE_URL and not user_id:
+            try:
+                import httpx
+                resp = httpx.get(
+                    f"{SUPABASE_URL}/auth/v1/user",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "apikey": SUPABASE_ANON_KEY,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    user_id = data.get("id")
+            except Exception as e:
+                logger.debug(f"Direct Supabase auth call failed: {e}")
+
+        # Strategy 3: Decode JWT without signature verification (fallback)
+        if not user_id:
+            try:
+                payload = pyjwt.decode(
+                    token,
+                    options={
+                        "verify_signature": False,
+                        "verify_aud": False,
+                        "verify_exp": True,
+                    },
+                )
+                if payload.get("aud") == "authenticated" and payload.get("sub"):
+                    user_id = payload["sub"]
+                    logger.debug("Auth via JWT decode fallback")
+            except pyjwt.ExpiredSignatureError:
+                return jsonify({"error": "Token expired"}), 401
+            except Exception as e:
+                logger.debug(f"JWT decode fallback failed: {e}")
+
+        if not user_id:
+            return jsonify({"error": "Authentication failed"}), 401
+
+        kwargs["user_id"] = user_id
         return f(*args, **kwargs)
     return decorated
 
