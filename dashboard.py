@@ -425,24 +425,21 @@ if SUPABASE_URL and SUPABASE_ANON_KEY and create_client:
 
 
 def require_auth(f):
-    """Decorator: validates Supabase JWT, injects user_id into kwargs."""
+    """Decorator: validates Supabase JWT via Supabase auth.get_user(), injects user_id."""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return jsonify({"error": "Missing or invalid Authorization header"}), 401
         token = auth_header[7:]
+        if not supabase_client:
+            return jsonify({"error": "Supabase not configured"}), 503
         try:
-            payload = pyjwt.decode(
-                token,
-                SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
-            kwargs["user_id"] = payload["sub"]
-        except pyjwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 401
-        except pyjwt.InvalidTokenError as e:
+            user_resp = supabase_client.auth.get_user(token)
+            if not user_resp or not user_resp.user:
+                return jsonify({"error": "Invalid token"}), 401
+            kwargs["user_id"] = user_resp.user.id
+        except Exception as e:
             return jsonify({"error": f"Invalid token: {e}"}), 401
         return f(*args, **kwargs)
     return decorated

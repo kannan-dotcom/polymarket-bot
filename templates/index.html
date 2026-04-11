@@ -1225,6 +1225,28 @@ async function resendOtp() {
     startResendTimer();
   } catch(e) { console.error('Resend failed:', e); }
 }
+// ═══════════ Session Timeout (5 min inactivity) ═══════════
+let sessionTimer = null;
+let lastActivity = Date.now();
+function resetActivity() { lastActivity = Date.now(); }
+function startSessionTimer() {
+  lastActivity = Date.now();
+  ['mousemove','keydown','click','scroll','touchstart'].forEach(e =>
+    document.addEventListener(e, resetActivity, {passive:true}));
+  sessionTimer = setInterval(() => {
+    if (Date.now() - lastActivity > 5 * 60 * 1000) {
+      stopSessionTimer();
+      authSignOut();
+      alert('Session expired due to inactivity. Please sign in again.');
+    }
+  }, 30000);
+}
+function stopSessionTimer() {
+  if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+  ['mousemove','keydown','click','scroll','touchstart'].forEach(e =>
+    document.removeEventListener(e, resetActivity));
+}
+
 function onAuthSuccess(user) {
   currentUser = user;
   hideAuthModal();
@@ -1234,9 +1256,11 @@ function onAuthSuccess(user) {
   // Switch to dashboard
   $('#landingPage').style.display = 'none';
   $('#dashboardContainer').style.display = '';
+  startSessionTimer();
   loadUserData();
 }
 function onSignOut() {
+  stopSessionTimer();
   currentUser = null;
   userHoldings = [];
   showAllStocks = false;
@@ -1370,6 +1394,10 @@ async function analyzeScreenshot(uploadId, storagePath) {
     renderSectorTables();
     updateHoldingsFilterBar();
     loadUserUploads();
+    // Auto-trigger portfolio risk + per-stock AI analysis
+    if (userHoldings.length) {
+      analyzePortfolioRisk();
+    }
   } catch(e) {
     console.error('Analysis failed:', e);
     alert('Screenshot analysis failed');
@@ -1386,12 +1414,28 @@ function showExtractionResults(holdings) {
     return `<tr>
       <td><strong>${h.stock_key}</strong><br><span style="color:var(--text-tertiary);font-size:10px">${name}</span></td>
       <td style="color:var(--text-tertiary)">${h.ticker}</td>
-      <td style="text-align:right">${Number(h.shares).toLocaleString()}</td>
+      <td style="text-align:right"><input type="number" value="${Number(h.shares)}" min="0" style="width:72px;text-align:right;background:var(--bg-2);border:1px solid var(--glass-border);color:var(--text-primary);padding:2px 6px;border-radius:4px;font-size:11px;font-family:inherit" onchange="updateHoldingShares('${h.stock_key}',this.value)"></td>
       <td style="text-align:right">RM${Number(h.avg_price).toFixed(2)}</td>
       <td style="text-align:right">RM${Number(h.market_value).toLocaleString()}</td>
       <td style="text-align:center"><button style="background:var(--accent-muted);color:var(--accent);border:none;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit" onclick="triggerStockAi('${h.stock_key}')">Analyse</button></td>
     </tr>`;
   }).join('');
+}
+async function updateHoldingShares(stockKey, newShares) {
+  const h = userHoldings.find(x => x.stock_key === stockKey);
+  if (!h) return;
+  h.shares = parseFloat(newShares) || 0;
+  h.market_value = h.shares * (h.avg_price || 0);
+  // Persist to backend
+  const token = await getToken();
+  if (!token) return;
+  try {
+    await fetch('/api/user/holdings', {
+      method: 'PUT',
+      headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+      body: JSON.stringify({holdings: userHoldings}),
+    });
+  } catch(e) { console.error('Update holdings failed:', e); }
 }
 
 // ═══════════ Portfolio Risk Analysis ═══════════
