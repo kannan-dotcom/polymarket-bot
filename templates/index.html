@@ -1133,12 +1133,15 @@ async function authSubmit() {
       hideAuthModal();
       showSignupSuccessMessage(email);
     } else {
-      // Login: Sign in with password directly
+      // Login: Verify password first, then require OTP
       const res = await sbClient.auth.signInWithPassword({email, password: pw});
       if (res.error) throw res.error;
-      // Password auth succeeded — user is logged in
-      // onAuthStateChange will fire and call onAuthSuccess
-      hideAuthModal();
+      // Password OK — now sign out the password session and require OTP
+      await sbClient.auth.signOut();
+      pendingOtpEmail = email;
+      const otpRes = await sbClient.auth.signInWithOtp({email});
+      if (otpRes.error) throw otpRes.error;
+      showOtpStep(email);
     }
   } catch (err) {
     $('#authError').textContent = err.message || 'Authentication failed';
