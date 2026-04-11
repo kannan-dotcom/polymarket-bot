@@ -1240,7 +1240,7 @@ function startSessionTimer() {
     if (Date.now() - lastActivity > 5 * 60 * 1000) {
       stopSessionTimer();
       authSignOut();
-      alert('Session expired due to inactivity. Please sign in again.');
+      showSessionExpiredBanner();
     }
   }, 30000);
 }
@@ -1248,6 +1248,18 @@ function stopSessionTimer() {
   if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
   ['mousemove','keydown','click','scroll','touchstart'].forEach(e =>
     document.removeEventListener(e, resetActivity));
+}
+function showSessionExpiredBanner() {
+  // Remove any existing banner
+  const old = document.getElementById('sessionExpiredBanner');
+  if (old) old.remove();
+  const banner = document.createElement('div');
+  banner.id = 'sessionExpiredBanner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;padding:14px 20px;background:linear-gradient(135deg,#1e293b,#0f172a);border-bottom:2px solid var(--accent);display:flex;align-items:center;justify-content:center;gap:16px;animation:fadeIn .3s ease';
+  banner.innerHTML = '<span style="color:var(--text-secondary);font-size:13px">Session expired due to inactivity.</span>'
+    + '<button onclick="document.getElementById(\'sessionExpiredBanner\').remove();showAuthModal()" style="padding:6px 18px;background:linear-gradient(135deg,var(--accent),#2563eb);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Sign In</button>'
+    + '<button onclick="document.getElementById(\'sessionExpiredBanner\').remove()" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:18px;padding:0 4px">&times;</button>';
+  document.body.prepend(banner);
 }
 
 function onAuthSuccess(user) {
