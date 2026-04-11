@@ -640,6 +640,60 @@ def api_record_upload(user_id=None):
     return jsonify({"upload": result.data[0] if result.data else {}})
 
 
+@app.route("/api/user/upload-file", methods=["POST"])
+@require_auth
+def api_upload_file(user_id=None):
+    """Upload a file directly to the server, then store in Supabase Storage."""
+    if not supabase_client:
+        return jsonify({"error": "Supabase not configured"}), 503
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    # Validate file type
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ("png", "jpg", "jpeg", "webp"):
+        return jsonify({"error": "Only PNG/JPG images allowed"}), 400
+
+    # Read file data
+    file_data = file.read()
+    if len(file_data) > 5 * 1024 * 1024:
+        return jsonify({"error": "File too large (max 5MB)"}), 400
+
+    # Check existing upload count (max 5)
+    existing = supabase_client.table("user_uploads") \
+        .select("id").eq("user_id", user_id).execute()
+    if len(existing.data or []) >= 5:
+        return jsonify({"error": "Maximum 5 images allowed"}), 400
+
+    storage_path = f"{user_id}/{int(time.time() * 1000)}.{ext}"
+    content_type = file.content_type or f"image/{ext}"
+
+    # Upload to Supabase Storage
+    try:
+        up_res = supabase_client.storage.from_("portfolio-screenshots") \
+            .upload(storage_path, file_data, {"content-type": content_type})
+    except Exception as e:
+        logger.error(f"Storage upload failed: {e}")
+        return jsonify({"error": f"Storage upload failed: {e}"}), 500
+
+    # Record in database
+    try:
+        result = supabase_client.table("user_uploads").insert({
+            "user_id": user_id,
+            "filename": file.filename,
+            "storage_path": storage_path,
+        }).execute()
+    except Exception as e:
+        logger.error(f"DB insert failed: {e}")
+        return jsonify({"error": f"Database error: {e}"}), 500
+
+    upload_record = result.data[0] if result.data else {"storage_path": storage_path}
+    return jsonify({"upload": upload_record, "storage_path": storage_path})
+
+
 @app.route("/api/user/uploads/<upload_id>", methods=["DELETE"])
 @require_auth
 def api_delete_upload(upload_id, user_id=None):

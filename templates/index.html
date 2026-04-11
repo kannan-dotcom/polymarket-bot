@@ -1339,30 +1339,26 @@ async function handleUpload(files) {
     if (file.size > 5 * 1024 * 1024) { alert('File too large: ' + file.name + ' (max 5MB)'); continue; }
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['png','jpg','jpeg','webp'].includes(ext)) { alert('Only PNG/JPG images allowed'); continue; }
-    const storagePath = currentUser.id + '/' + Date.now() + '.' + ext;
     try {
-      // Step 1: Upload file to Supabase Storage
-      const {data: upData, error: upErr} = await sbClient.storage.from('portfolio-screenshots').upload(storagePath, file, {contentType: file.type});
-      if (upErr) { alert('Storage upload failed: ' + (upErr.message || upErr.error || JSON.stringify(upErr))); continue; }
-
-      // Step 2: Record upload in database
       const tkn = await getToken();
       if (!tkn) { alert('Session expired. Please sign in again.'); return; }
-      const recRes = await fetch('/api/user/uploads', {
+      // Upload via server (handles storage + DB in one call)
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/user/upload-file', {
         method: 'POST',
-        headers: {'Authorization': 'Bearer ' + tkn, 'Content-Type': 'application/json'},
-        body: JSON.stringify({filename: file.name, storage_path: storagePath}),
+        headers: {'Authorization': 'Bearer ' + tkn},
+        body: formData,
       });
-      if (!recRes.ok) {
-        const errText = await recRes.text();
-        console.error('Record upload failed:', recRes.status, errText);
-        alert('Failed to record upload (status ' + recRes.status + '). The file was uploaded but could not be registered.');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({error: 'Upload failed (status ' + res.status + ')'}));
+        alert(err.error || 'Upload failed');
         continue;
       }
-      const rec = await recRes.json();
+      const rec = await res.json();
       loadUserUploads();
-      // Step 3: Auto-trigger AI analysis
-      analyzeScreenshot(rec.upload?.id || '', storagePath);
+      // Auto-trigger AI analysis
+      analyzeScreenshot(rec.upload?.id || '', rec.storage_path || '');
     } catch(e) { console.error('Upload failed:', e); alert('Upload failed: ' + (e.message || e)); }
   }
 }
